@@ -98,6 +98,7 @@ struct window_manager
     float window_opacity_duration;
     float window_animation_duration;
     int window_animation_easing;
+    float window_animation_min_opacity;
     struct rgba_color insert_feedback_color;
     struct scratchpad *scratchpad_window;
 };
@@ -212,5 +213,6 @@ void window_manager_correct_for_mission_control_changes(struct space_manager *sm
 void window_manager_handle_display_add_and_remove(struct space_manager *sm, struct window_manager *wm, uint32_t did);
 void window_manager_begin(struct space_manager *sm, struct window_manager *wm);
 void window_manager_init(struct window_manager *wm);
+void window_manager_animate_windows_lockedbounds_async(struct window_capture *window_list, int window_count);
 
 #endif

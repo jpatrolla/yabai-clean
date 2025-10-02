@@ -1,3 +1,7 @@
+#include <CoreFoundation/CFBase.h>
+#include <CoreFoundation/CFCGTypes.h>
+#include <CoreGraphics/CGAffineTransform.h>
+#include <CoreGraphics/CGDirectDisplay.h>
 #include <Foundation/Foundation.h>
 
 #include <mach-o/getsect.h>
@@ -41,6 +45,9 @@
 #define page_align(addr) (vm_address_t)((uintptr_t)(addr) & (~(vm_page_size - 1)))
 #define unpack(v) memcpy(&v, message, sizeof(v)); message += sizeof(v)
 #define lerp(a, t, b) (((1.0-t)*a) + (t*b))
+extern CGError SLSTransactionSetWindowTransform(CFTypeRef transaction, uint32_t wid, int unknown, int unknown2, CGAffineTransform t);
+#define TRANSITION_SIZE_THRESHOLD 0.45f  // If current width < 45% of final width
+#define TRANSITION_MIN_OPACITY 0.7f      // Clamp opacity to minimum 70%
 
 extern int SLSMainConnectionID(void);
 extern CGError SLSGetConnectionPSN(int cid, ProcessSerialNumber *psn);
@@ -54,6 +61,9 @@ extern CGError SLSClearWindowTags(int cid, uint32_t wid, uint64_t *tags, size_t 
 extern CGError SLSGetWindowBounds(int cid, uint32_t wid, CGRect *frame);
 extern CGError SLSGetWindowTransform(int cid, uint32_t wid, CGAffineTransform *t);
 extern CGError SLSSetWindowTransform(int cid, uint32_t wid, CGAffineTransform t);
+extern CGError SLSTransactionSetWindowAlpha(CFTypeRef transaction, uint32_t wid, float alpha);
+extern CGError SLSTransactionSetWindowLockedBounds(CFTypeRef transaction, uint32_t wid, CGRect bounds);
+extern CGError SLSTransactionClearWindowLockedBounds(CFTypeRef transaction, uint32_t wid);
 extern CGError SLSOrderWindow(int cid, uint32_t wid, int order, uint32_t rel_wid);
 extern void SLSManagedDisplaySetCurrentSpace(int cid, CFStringRef display_ref, uint64_t sid);
 extern uint64_t SLSManagedDisplayGetCurrentSpace(int cid, CFStringRef display_ref);
@@ -630,6 +640,53 @@ static void do_window_scale(char *message)
     }
 }
 
+static void do_winodw_lockedbounds_animation(char *message)
+{
+    uint32_t wid;
+    unpack(wid);
+    if (!wid) {
+        return;
+    }
+    CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
+    
+    float fade_duration;
+    unpack(fade_duration);
+   
+    float cx, cy, cw, ch;
+   
+    unpack(cx);
+    unpack(cy);
+    unpack(cw);
+    unpack(ch);
+    
+    float min_opacity;
+    unpack(min_opacity);
+    
+    float progress;
+    unpack(progress);
+    
+    CGRect current_frame = { .origin={cx, cy}, .size={cw, ch}};
+    
+    // Always set the locked bounds for animation
+    if (progress < 1.0f) {
+        SLSTransactionSetWindowLockedBounds(transaction, wid, current_frame);
+    } else {
+        // Animation complete - clear locked bounds
+        SLSTransactionClearWindowLockedBounds(transaction, wid);
+    }
+    
+    // Apply fade animation if enabled (fade_duration > 0.0)
+    if (fade_duration > 0.0f) {
+        // Calculate alpha based on progress: lerp from min_opacity to 1.0
+        float alpha = min_opacity + (1.0f - min_opacity) * progress;
+        SLSTransactionSetWindowSystemAlpha(transaction, wid, alpha);
+    }
+    
+    SLSTransactionCommit(transaction, 1);
+    CFRelease(transaction);
+}
+
+
 static void do_window_move(char *message)
 {
     uint32_t wid;
@@ -998,6 +1055,9 @@ static void handle_message(int sockfd, char *message)
     case SA_OPCODE_WINDOW_SCALE: {
         do_window_scale(message);
     } break;
+    case SA_OPCODE_WINDOW_LOCKEDBOUNDS_ANIMATE: {
+        do_winodw_lockedbounds_animation(message);
+    }
     case SA_OPCODE_WINDOW_SWAP_PROXY_IN: {
         do_window_swap_proxy_in(message);
     } break;

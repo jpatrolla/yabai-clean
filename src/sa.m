@@ -542,6 +542,20 @@ bool scripting_addition_scale_window(uint32_t wid, float x, float y, float w, fl
     return sa_payload_send(SA_OPCODE_WINDOW_SCALE);
 }
 
+bool scripting_addition_animate_with_lockedbounds(uint32_t wid, float fade_duration, float cx, float cy, float cw, float ch, float min_opacity, float progress)
+{
+    sa_payload_init();
+    pack(wid);
+    pack(fade_duration);
+    pack(cx);
+    pack(cy);
+    pack(cw);
+    pack(ch);
+    pack(min_opacity);
+    pack(progress);
+    return sa_payload_send(SA_OPCODE_WINDOW_LOCKEDBOUNDS_ANIMATE);
+}
+
 bool scripting_addition_swap_window_proxy_in(struct window_animation *animation_list, int animation_count)
 {
     uint32_t dummy_wid = 0;
