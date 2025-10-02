@@ -255,10 +255,49 @@ bool space_manager_toggle_gap_for_space(struct space_manager *sm, uint64_t sid)
     return true;
 }
 
-void space_manager_toggle_mission_control(uint64_t sid)
-{
-    space_manager_focus_space(sid);
+void space_manager_toggle_mission_control(uint64_t sid, bool thumbnails_enabled) {
+    static CGPoint saved_mouse_position = {0, 0};
+    bool is_in_mc = mission_control_is_active();
+
+    if (!is_in_mc) {
+        if (thumbnails_enabled) {
+            // store current mouse position
+            CGEventRef event = CGEventCreate(NULL);
+            saved_mouse_position = CGEventGetLocation(event);
+            CFRelease(event);
+
+            // activate mission Control
+            CoreDockSendNotification(CFSTR("com.apple.expose.awake"), 0);
+
+            // move mouse to top-center of the main display
+            uint32_t did = display_manager_main_display_id();
+            CGRect bounds = CGDisplayBounds(did);
+            CGPoint top_center = {
+                .x = bounds.origin.x + bounds.size.width / 2,
+                .y = bounds.origin.y + 20
+            };
+            CGWarpMouseCursorPosition(top_center);
+            
+            // Hide cursor
+            CGDisplayHideCursor(CGMainDisplayID());
+        } else {
+            // activate mission Control without mouse manipulation
     CoreDockSendNotification(CFSTR("com.apple.expose.awake"), 0);
+        }
+
+    } else {
+        CoreDockSendNotification(CFSTR("com.apple.expose.awake"), 0);
+
+        if (thumbnails_enabled) {
+            // restore previous mouse position
+            CGWarpMouseCursorPosition(saved_mouse_position);
+            
+            // Show cursor
+            CGDisplayShowCursor(CGMainDisplayID());
+        }
+        
+        space_manager_focus_space(sid);
+    }
 }
 
 void space_manager_toggle_show_desktop(uint64_t sid)
@@ -1157,6 +1196,8 @@ void space_manager_begin(struct space_manager *sm)
     sm->window_placement = CHILD_SECOND;
     sm->window_insertion_point = INSERT_FOCUSED;
     sm->window_zoom_persist = true;
+    sm->mission_control_thumbnails_enabled = false;
+    sm->mission_control_active_focus_enabled = false;
     sm->labels = NULL;
     table_init(&sm->view, 23, hash_view, compare_view);
 

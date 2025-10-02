@@ -938,6 +938,9 @@ static EVENT_HANDLER(SLS_SPACE_CREATED)
 {
     uint64_t sid = (uint64_t)(intptr_t) context;
     int type = SLSSpaceGetType(g_connection, sid);
+    
+    g_space_manager.current_space_id = space_manager_active_space();
+    space_indicator_update(&g_space_indicator, g_space_manager.current_space_id);
 
     if (type == 0 || type == 4) {
         debug("%s: %lld, %d\n", __FUNCTION__, sid, type);
@@ -950,6 +953,7 @@ static EVENT_HANDLER(SLS_SPACE_DESTROYED)
 {
     uint64_t sid = (uint64_t)(intptr_t) context;
     struct view *view = table_find(&g_space_manager.view, &sid);
+    space_indicator_update(&g_space_indicator, g_space_manager.current_space_id);
     if (view) {
         debug("%s: %lld\n", __FUNCTION__, sid);
         space_manager_remove_label_for_space(&g_space_manager, sid);

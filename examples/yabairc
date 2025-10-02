@@ -42,6 +42,8 @@ yabai -m config                                 \
     mouse_modifier               fn             \
     mouse_action1                move           \
     mouse_action2                resize         \
-    mouse_drop_action            swap
-
+    mouse_drop_action            swap           \
+    space_indicator enabled=off indicator_color=0xAARRGGBB indicator_height=8.0 position=bottom \// position not tested 
+    mission_control_thumbnails_enabled on       \
+    mission_control_active_focus_enabled on
 echo "yabai configuration loaded.."

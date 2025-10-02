@@ -25,6 +25,8 @@ struct space_manager
     enum window_insertion_point window_insertion_point;
     bool window_zoom_persist;
     uint32_t auto_balance;
+    bool mission_control_thumbnails_enabled;
+    bool mission_control_active_focus_enabled;
     struct space_label *labels;
 };
 
@@ -73,7 +75,7 @@ void space_manager_set_label_for_space(struct space_manager *sm, uint64_t sid, c
 void space_manager_set_layout_for_space(struct space_manager *sm, uint64_t sid, enum view_type type);
 bool space_manager_set_gap_for_space(struct space_manager *sm, uint64_t sid, int type, int gap);
 bool space_manager_toggle_gap_for_space(struct space_manager *sm, uint64_t sid);
-void space_manager_toggle_mission_control(uint64_t sid);
+void space_manager_toggle_mission_control(uint64_t sid, bool thumbnails_enabled);
 void space_manager_toggle_show_desktop(uint64_t sid);
 void space_manager_set_layout_for_all_spaces(struct space_manager *sm, enum view_type layout);
 void space_manager_set_window_gap_for_all_spaces(struct space_manager *sm, int window_gap);
