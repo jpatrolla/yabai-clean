@@ -9,6 +9,10 @@ extern int g_connection;
 extern void *g_workspace_context;
 extern int g_layer_below_window_level;
 
+struct space_indicator;
+void space_indicator_update(struct space_indicator *indicator, uint64_t sid);
+extern struct space_indicator g_space_indicator;
+
 static void update_window_notifications(void)
 {
     int window_count = 0;
@@ -961,6 +965,7 @@ static EVENT_HANDLER(SPACE_CHANGED)
     g_space_manager.last_space_id = g_space_manager.current_space_id;
     g_space_manager.current_space_id = space_manager_active_space();
 
+    space_indicator_update(&g_space_indicator, g_space_manager.current_space_id);
     if (g_window_manager.menubar_opacity != 1.0f) {
         float alpha = space_is_fullscreen(g_space_manager.current_space_id) ? 1.0f : g_window_manager.menubar_opacity;
         SLSSetMenuBarInsetAndAlpha(g_connection, 0, 1, alpha);
@@ -1495,8 +1500,11 @@ static EVENT_HANDLER(MISSION_CONTROL_EXIT)
         window_manager_correct_for_mission_control_changes(&g_space_manager, &g_window_manager);
     }
 
+    
     event_signal_push(SIGNAL_MISSION_CONTROL_EXIT, (void*)(uintptr_t)g_mission_control_mode);
     g_mission_control_mode = MISSION_CONTROL_MODE_INACTIVE;
+    g_space_manager.current_space_id = space_manager_active_space();
+    space_indicator_update(&g_space_indicator, g_space_manager.current_space_id);
 }
 
 static EVENT_HANDLER(DOCK_DID_RESTART)

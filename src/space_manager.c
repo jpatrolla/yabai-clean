@@ -11,6 +11,17 @@ static TABLE_COMPARE_FUNC(compare_view)
     return *(uint64_t *) key_a == *(uint64_t *) key_b;
 }
 
+#include "space_indicator.h"
+struct space_indicator g_space_indicator = {
+    .config = {
+        .enabled = false,
+        .indicator_height = 8.0f,
+        .position = 1, // bottom
+        .indicator_color = 0xffffffff // white default
+    }
+};
+
+
 bool space_manager_query_space(FILE *rsp, uint64_t sid, uint64_t flags)
 {
     TIME_FUNCTION;
@@ -914,14 +925,20 @@ enum space_op_error space_manager_focus_space(uint64_t sid)
     bool is_animating = display_manager_display_is_animating(new_did);
     if (is_animating) return SPACE_OP_ERROR_DISPLAY_IS_ANIMATING;
 
+    space_indicator_update_optimistic(&g_space_indicator, sid);
+
     if (scripting_addition_focus_space(sid)) {
         if (focus_display) {
             display_manager_focus_display(new_did, sid);
         }
     } else {
+        // If space change failed, correct the indicator back to current space
+        space_indicator_update(&g_space_indicator, cur_sid);
         return SPACE_OP_ERROR_SCRIPTING_ADDITION;
     }
-
+    // Update indicator on successful space change (fallback/correction)
+    space_indicator_update(&g_space_indicator, sid);
+    
     return SPACE_OP_ERROR_SUCCESS;
 }
 
@@ -942,13 +959,24 @@ enum space_op_error space_manager_switch_space(uint64_t sid)
     bool is_dst_animating = display_manager_display_is_animating(did);
     if (is_dst_animating) return SPACE_OP_ERROR_DISPLAY_IS_ANIMATING;
 
+    // Optimistically animate the indicator immediately for snappy response
+    space_indicator_update_optimistic(&g_space_indicator, sid);
+
     if (cur_did != did) {
         space_manager_swap_space_with_space_on_display(cur_did, cur_sid, did, sid);
         display_manager_focus_display(cur_did, cur_sid);
+        space_indicator_update(&g_space_indicator, sid);
         return SPACE_OP_ERROR_SUCCESS;
     }
 
-    return scripting_addition_focus_space(sid) ? SPACE_OP_ERROR_SUCCESS : SPACE_OP_ERROR_SCRIPTING_ADDITION;
+    enum space_op_error result = scripting_addition_focus_space(sid) ? SPACE_OP_ERROR_SUCCESS : SPACE_OP_ERROR_SCRIPTING_ADDITION;
+    if (result == SPACE_OP_ERROR_SUCCESS) {
+        space_indicator_update(&g_space_indicator, sid);
+    } else {
+        // If space change failed, correct the indicator back to current space
+        space_indicator_update(&g_space_indicator, cur_sid);
+    }
+    return result;
 }
 
 enum space_op_error space_manager_destroy_space(uint64_t sid)
@@ -972,7 +1000,7 @@ enum space_op_error space_manager_destroy_space(uint64_t sid)
     if (first_sid) {
         window_manager_validate_and_check_for_windows_on_space(&g_space_manager, &g_window_manager, first_sid);
     }
-
+    space_indicator_update(&g_space_indicator, sid);
     return SPACE_OP_ERROR_SUCCESS;
 }
 
@@ -985,6 +1013,7 @@ enum space_op_error space_manager_add_space(uint64_t sid)
     bool is_animating = display_manager_display_is_animating(space_display_id(sid));
     if (is_animating) return SPACE_OP_ERROR_DISPLAY_IS_ANIMATING;
 
+    space_indicator_update(&g_space_indicator, sid);
     return scripting_addition_create_space(sid) ? SPACE_OP_ERROR_SUCCESS : SPACE_OP_ERROR_SCRIPTING_ADDITION;
 }
 
@@ -1114,6 +1143,9 @@ void space_manager_handle_display_add(struct space_manager *sm, uint32_t did)
 
     sm->current_space_id = space_manager_active_space();
     sm->last_space_id = sm->current_space_id;
+
+    // Refresh indicator when display configuration changes
+    space_indicator_refresh(&g_space_indicator);
 }
 
 void space_manager_begin(struct space_manager *sm)
@@ -1146,4 +1178,7 @@ void space_manager_begin(struct space_manager *sm)
     sm->current_space_id = space_manager_active_space();
     sm->last_space_id = sm->current_space_id;
     sm->did_begin = true;
+
+    // Initialize space indicator
+    space_indicator_create(&g_space_indicator);
 }
