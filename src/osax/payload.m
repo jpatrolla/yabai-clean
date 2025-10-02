@@ -640,7 +640,7 @@ static void do_window_scale(char *message)
     }
 }
 
-static void do_winodw_lockedbounds_animation(char *message)
+static void do_window_lockedbounds_animation(char *message)
 {
     uint32_t wid;
     unpack(wid);
@@ -1056,7 +1056,7 @@ static void handle_message(int sockfd, char *message)
         do_window_scale(message);
     } break;
     case SA_OPCODE_WINDOW_LOCKEDBOUNDS_ANIMATE: {
-        do_winodw_lockedbounds_animation(message);
+        do_window_lockedbounds_animation(message);
     }
     case SA_OPCODE_WINDOW_SWAP_PROXY_IN: {
         do_window_swap_proxy_in(message);

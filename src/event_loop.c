@@ -13,6 +13,7 @@ struct space_indicator;
 void space_indicator_update(struct space_indicator *indicator, uint64_t sid);
 extern struct space_indicator g_space_indicator;
 
+
 static void update_window_notifications(void)
 {
     int window_count = 0;
@@ -953,6 +954,7 @@ static EVENT_HANDLER(SLS_SPACE_DESTROYED)
 {
     uint64_t sid = (uint64_t)(intptr_t) context;
     struct view *view = table_find(&g_space_manager.view, &sid);
+    g_space_manager.current_space_id = space_manager_active_space();
     space_indicator_update(&g_space_indicator, g_space_manager.current_space_id);
     if (view) {
         debug("%s: %lld\n", __FUNCTION__, sid);
@@ -1009,7 +1011,6 @@ static EVENT_HANDLER(DISPLAY_CHANGED)
         debug("%s: newly activated display %d was already active (%d)! ignoring event..\n", __FUNCTION__, g_display_manager.current_display_id, new_did);
         return;
     }
-
     g_display_manager.last_display_id = g_display_manager.current_display_id;
     g_display_manager.current_display_id = new_did;
 
@@ -1059,6 +1060,8 @@ static EVENT_HANDLER(DISPLAY_ADDED)
     uint32_t did = (uint32_t)(intptr_t) context;
     debug("%s: %d\n", __FUNCTION__, did);
     space_manager_handle_display_add(&g_space_manager, did);
+    g_space_manager.current_space_id = space_manager_active_space();
+    space_indicator_update(&g_space_indicator, g_space_manager.current_space_id);
     window_manager_handle_display_add_and_remove(&g_space_manager, &g_window_manager, did);
     event_signal_push(SIGNAL_DISPLAY_ADDED, context);
 }
@@ -1086,6 +1089,8 @@ static EVENT_HANDLER(DISPLAY_RESIZED)
     debug("%s: %d\n", __FUNCTION__, did);
     space_manager_mark_spaces_invalid_for_display(&g_space_manager, did);
     event_signal_push(SIGNAL_DISPLAY_RESIZED, context);
+    g_space_manager.current_space_id = space_manager_active_space();
+    space_indicator_update(&g_space_indicator, g_space_manager.current_space_id);
 }
 
 static EVENT_HANDLER(MOUSE_DOWN)
@@ -1507,7 +1512,7 @@ static EVENT_HANDLER(MISSION_CONTROL_EXIT)
     
     event_signal_push(SIGNAL_MISSION_CONTROL_EXIT, (void*)(uintptr_t)g_mission_control_mode);
     g_mission_control_mode = MISSION_CONTROL_MODE_INACTIVE;
-    g_space_manager.current_space_id = space_manager_active_space();
+    
     space_indicator_update(&g_space_indicator, g_space_manager.current_space_id);
 }
 
