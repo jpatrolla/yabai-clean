@@ -667,6 +667,7 @@ static void do_window_lockedbounds_animation(char *message)
     
     CGRect current_frame = { .origin={cx, cy}, .size={cw, ch}};
     
+    NSLog(@"testing xxx");
     // Always set the locked bounds for animation
     if (progress < 1.0f) {
         SLSTransactionSetWindowLockedBounds(transaction, wid, current_frame);

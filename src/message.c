@@ -18,6 +18,7 @@ extern bool g_verbose;
 #define DOMAIN_QUERY   "query"
 #define DOMAIN_RULE    "rule"
 #define DOMAIN_SIGNAL  "signal"
+#define DOMAIN_DEBUG   "debug"
 
 /* --------------------------------DOMAIN CONFIG-------------------------------- */
 #define COMMAND_CONFIG_DEBUG_OUTPUT          "debug_output"
@@ -242,6 +243,14 @@ extern bool g_verbose;
 
 #define ARGUMENT_SIGNAL_VALUE_YES    "yes"
 #define ARGUMENT_SIGNAL_VALUE_NO     "no"
+/* ----------------------------------------------------------------------------- */
+
+/* --------------------------------DOMAIN DEBUG--------------------------------- */
+#define COMMAND_DEBUG_LOG_TEST "--log-test"
+#define COMMAND_DEBUG_CALL_API "--call-api"
+#define COMMAND_DEBUG_WINDOW_TAGS "--window-tags"
+#define COMMAND_DEBUG_SPACE_ITERATOR "--space-iterator"
+#define COMMAND_DEBUG_DISPLAY_HIERARCHY "--display-hierarchy"
 /* ----------------------------------------------------------------------------- */
 
 /* --------------------------------COMMON ARGUMENTS----------------------------- */
@@ -3093,6 +3102,931 @@ static void handle_domain_signal(FILE *rsp, struct token domain, char *message)
     }
 }
 
+static void handle_domain_debug(FILE *rsp, struct token domain, char *message)
+{
+    struct token command = get_token(&message);
+    if (token_equals(command, COMMAND_DEBUG_LOG_TEST)) {
+        extern int g_connection;
+        
+        fprintf(rsp, "=== Stage Manager / Workspace API Test ===\n\n");
+        fprintf(rsp, "Connection ID: %d\n\n", g_connection);
+        
+        // Function pointers for SLS APIs we want to test
+        void *ptr_SLSGetWorkspace = macho_find_symbol(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+            "_SLSGetWorkspace"
+        );
+        void *ptr_SLSGetActiveSpace = macho_find_symbol(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+            "_SLSGetActiveSpace"
+        );
+        void *ptr_SLSGetWorkspaceWindowGroup = macho_find_symbol(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+            "_SLSGetWorkspaceWindowGroup"
+        );
+        void *ptr_SLSGetSpaceBindings = macho_find_symbol(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+            "_SLSGetSpaceBindings"
+        );
+        void *ptr_SLSGetWindowWorkspaceIgnoringVisibility = macho_find_symbol(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+            "_SLSGetWindowWorkspaceIgnoringVisibility"
+        );
+        
+        // Check which symbols were found
+        fprintf(rsp, "Symbol Resolution:\n");
+        fprintf(rsp, "  _SLSGetActiveSpace: %s (%p)\n", ptr_SLSGetActiveSpace ? "Found" : "Not Found", ptr_SLSGetActiveSpace);
+        fprintf(rsp, "  _SLSGetWorkspace: %s (%p)\n", ptr_SLSGetWorkspace ? "Found" : "Not Found", ptr_SLSGetWorkspace);
+        fprintf(rsp, "  _SLSGetWorkspaceWindowGroup: %s (%p)\n", ptr_SLSGetWorkspaceWindowGroup ? "Found" : "Not Found", ptr_SLSGetWorkspaceWindowGroup);
+        fprintf(rsp, "  _SLSGetSpaceBindings: %s (%p)\n", ptr_SLSGetSpaceBindings ? "Found" : "Not Found", ptr_SLSGetSpaceBindings);
+        fprintf(rsp, "  _SLSGetWindowWorkspaceIgnoringVisibility: %s (%p)\n\n", ptr_SLSGetWindowWorkspaceIgnoringVisibility ? "Found" : "Not Found", ptr_SLSGetWindowWorkspaceIgnoringVisibility);
+        
+        // Only proceed with tests if symbols are found
+        if (!ptr_SLSGetActiveSpace && !ptr_SLSGetWorkspace && !ptr_SLSGetWorkspaceWindowGroup && 
+            !ptr_SLSGetSpaceBindings && !ptr_SLSGetWindowWorkspaceIgnoringVisibility) {
+            fprintf(rsp, "⚠️  No Stage Manager/Workspace APIs found.\n");
+            fprintf(rsp, "This likely means Stage Manager APIs don't exist on this macOS version,\n");
+            fprintf(rsp, "or they use different function names.\n\n");
+            fprintf(rsp, "=== Test Complete ===\n");
+            return;
+        }
+        
+        fprintf(rsp, "✅ All symbols found! Use --call-api to test them.\n\n");
+        fprintf(rsp, "Examples:\n");
+        fprintf(rsp, "  yabai -m debug --call-api SLSGetActiveSpace\n");
+        fprintf(rsp, "  yabai -m debug --call-api SLSGetWorkspace <wid>\n");
+        fprintf(rsp, "  yabai -m debug --call-api SLSGetWorkspaceWindowGroup <workspace_id>\n");
+        fprintf(rsp, "  yabai -m debug --call-api SLSGetSpaceBindings <space_id>\n");
+        fprintf(rsp, "  yabai -m debug --call-api SLSGetWindowWorkspaceIgnoringVisibility <wid>\n");
+        fprintf(rsp, "  yabai -m debug --call-api SLSCopyWindowGroup <wid> [GroupName]\n\n");
+        fprintf(rsp, "Note: Window group names to try: OrderingGroup, WorkspaceGroup, etc.\n\n");
+        fprintf(rsp, "=== Test Complete ===\n");
+    } else if (token_equals(command, COMMAND_DEBUG_CALL_API)) {
+        extern int g_connection;
+        
+        struct token api_name = get_token(&message);
+        if (!token_is_valid(api_name)) {
+            daemon_fail(rsp, "usage: yabai -m debug --call-api <API_NAME> [args...]\n");
+            return;
+        }
+        
+        // Build the symbol name (prepend _ if not present)
+        char symbol_name[256];
+        if (api_name.text[0] == '_') {
+            snprintf(symbol_name, sizeof(symbol_name), "%.*s", api_name.length, api_name.text);
+        } else {
+            snprintf(symbol_name, sizeof(symbol_name), "_%.*s", api_name.length, api_name.text);
+        }
+        
+        // Try to find the symbol
+        void *symbol = macho_find_symbol(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+            symbol_name
+        );
+        
+        if (!symbol) {
+            daemon_fail(rsp, "API '%s' not found in SkyLight framework\n", symbol_name);
+            return;
+        }
+        
+        fprintf(rsp, "=== Calling %s ===\n\n", symbol_name);
+        fprintf(rsp, "Symbol address: %p\n", symbol);
+        fprintf(rsp, "Connection ID: %d\n\n", g_connection);
+        
+        // Handle different APIs based on name
+        if (strstr(symbol_name, "SLSGetActiveSpace")) {
+            typedef uint64_t (*func_t)(int);
+            func_t func = (func_t)symbol;
+            uint64_t result = func(g_connection);
+            fprintf(rsp, "Result: %llu (0x%llx)\n", result, result);
+            
+        } else if (strstr(symbol_name, "SLSGetWorkspace")) {
+            // SLSGetWorkspace(cid, wid) -> int
+            struct token wid_token = get_token(&message);
+            uint32_t wid = 0;
+            
+            if (token_is_valid(wid_token)) {
+                int wid_int;
+                if (token_is_positive_integer(wid_token, &wid_int)) {
+                    wid = (uint32_t)wid_int;
+                }
+            }
+            
+            if (wid == 0) {
+                struct window *window = window_manager_focused_window(&g_window_manager);
+                wid = window ? window->id : 0;
+            }
+            
+            if (wid == 0) {
+                daemon_fail(rsp, "No window ID provided and no focused window found\n");
+                return;
+            }
+            
+            fprintf(rsp, "Window ID: %u\n", wid);
+            
+            typedef int (*func_t)(int, uint32_t);
+            func_t func = (func_t)symbol;
+            int result = func(g_connection, wid);
+            fprintf(rsp, "Result: %d\n", result);
+            
+        } else if (strstr(symbol_name, "SLSGetWindowWorkspaceIgnoringVisibility")) {
+            // SLSGetWindowWorkspaceIgnoringVisibility(cid, wid) -> int
+            struct token wid_token = get_token(&message);
+            uint32_t wid = 0;
+            
+            if (token_is_valid(wid_token)) {
+                int wid_int;
+                if (token_is_positive_integer(wid_token, &wid_int)) {
+                    wid = (uint32_t)wid_int;
+                }
+            }
+            
+            if (wid == 0) {
+                struct window *window = window_manager_focused_window(&g_window_manager);
+                wid = window ? window->id : 0;
+            }
+            
+            if (wid == 0) {
+                daemon_fail(rsp, "No window ID provided and no focused window found\n");
+                return;
+            }
+            
+            fprintf(rsp, "Window ID: %u\n", wid);
+            fprintf(rsp, "Attempting to call function...\n");
+            fflush(rsp);
+            
+            @try {
+                typedef int (*func_t)(int, uint32_t);
+                func_t func = (func_t)symbol;
+                int result = func(g_connection, wid);
+                fprintf(rsp, "Result: %d\n", result);
+            } @catch (NSException *exception) {
+                fprintf(rsp, "CAUGHT EXCEPTION: %s\n", [[exception reason] UTF8String]);
+                fprintf(rsp, "This likely means the function signature is wrong.\n");
+                fprintf(rsp, "Try: The function might return void, take different parameters,\n");
+                fprintf(rsp, "     or require the window to be in a specific state.\n");
+            }
+            
+        } else if (strstr(symbol_name, "SLSGetWorkspaceWindowGroup")) {
+            // SLSGetWorkspaceWindowGroup(cid, workspace) -> CFArrayRef
+            struct token workspace_token = get_token(&message);
+            int workspace = 0;
+            
+            if (token_is_valid(workspace_token)) {
+                token_is_positive_integer(workspace_token, &workspace);
+            }
+            
+            if (workspace == 0) {
+                daemon_fail(rsp, "Workspace ID required. Usage: --call-api SLSGetWorkspaceWindowGroup <workspace_id>\n");
+                return;
+            }
+            
+            fprintf(rsp, "Workspace ID: %d\n", workspace);
+            
+            typedef CFArrayRef (*func_t)(int, int);
+            func_t func = (func_t)symbol;
+            CFArrayRef result = func(g_connection, workspace);
+            
+            if (result) {
+                CFIndex count = CFArrayGetCount(result);
+                fprintf(rsp, "Result: CFArray with %ld items\n", count);
+                for (CFIndex i = 0; i < count && i < 20; ++i) {
+                    CFTypeRef item = CFArrayGetValueAtIndex(result, i);
+                    fprintf(rsp, "  [%ld]: %p (CFTypeID: %lu)\n", i, item, CFGetTypeID(item));
+                }
+                if (count > 20) fprintf(rsp, "  ... (%ld more)\n", count - 20);
+                CFRelease(result);
+            } else {
+                fprintf(rsp, "Result: NULL\n");
+            }
+            
+        } else if (strstr(symbol_name, "SLSGetSpaceBindings")) {
+            // SLSGetSpaceBindings(cid, sid) -> CFArrayRef
+            struct token sid_token = get_token(&message);
+            uint64_t sid = 0;
+            
+            if (token_is_valid(sid_token)) {
+                int sid_int;
+                if (token_is_positive_integer(sid_token, &sid_int)) {
+                    sid = (uint64_t)sid_int;
+                }
+            }
+            
+            if (sid == 0) {
+                sid = space_manager_active_space();
+            }
+            
+            fprintf(rsp, "Space ID: %llu\n", sid);
+            
+            typedef CFArrayRef (*func_t)(int, uint64_t);
+            func_t func = (func_t)symbol;
+            CFArrayRef result = func(g_connection, sid);
+            
+            if (result) {
+                CFIndex count = CFArrayGetCount(result);
+                fprintf(rsp, "Result: CFArray with %ld items\n", count);
+                for (CFIndex i = 0; i < count && i < 20; ++i) {
+                    CFTypeRef item = CFArrayGetValueAtIndex(result, i);
+                    CFStringRef desc = CFCopyDescription(item);
+                    char buffer[512];
+                    if (CFStringGetCString(desc, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+                        fprintf(rsp, "  [%ld]: %s\n", i, buffer);
+                    } else {
+                        fprintf(rsp, "  [%ld]: <complex object>\n", i);
+                    }
+                    CFRelease(desc);
+                }
+                if (count > 20) fprintf(rsp, "  ... (%ld more)\n", count - 20);
+                CFRelease(result);
+            } else {
+                fprintf(rsp, "Result: NULL\n");
+            }
+            
+        } else if (strstr(symbol_name, "SLSCopyWindowGroup")) {
+            // SLSCopyWindowGroup(cid, wid, groupName) -> CFArrayRef
+            struct token wid_token = get_token(&message);
+            struct token group_token = get_token(&message);
+            uint32_t wid = 0;
+            
+            if (token_is_valid(wid_token)) {
+                int wid_int;
+                if (token_is_positive_integer(wid_token, &wid_int)) {
+                    wid = (uint32_t)wid_int;
+                }
+            }
+            
+            if (wid == 0) {
+                struct window *window = window_manager_focused_window(&g_window_manager);
+                wid = window ? window->id : 0;
+            }
+            
+            if (wid == 0) {
+                daemon_fail(rsp, "No window ID provided and no focused window found\n");
+                return;
+            }
+            
+            // Default group name if not provided
+            char group_name[256] = "OrderingGroup";
+            if (token_is_valid(group_token)) {
+                snprintf(group_name, sizeof(group_name), "%.*s", group_token.length, group_token.text);
+            }
+            
+            fprintf(rsp, "Window ID: %u\n", wid);
+            fprintf(rsp, "Group Name: %s\n\n", group_name);
+            
+            @try {
+                // Create CFString for group name
+                CFStringRef group_cf = CFStringCreateWithCString(NULL, group_name, kCFStringEncodingUTF8);
+                if (!group_cf) {
+                    fprintf(rsp, "Failed to create CFString\n");
+                    return;
+                }
+                
+                fprintf(rsp, "Attempting call with signature: CFArrayRef func(int cid, uint32_t wid, CFStringRef group)\n");
+                fflush(rsp);
+                
+                typedef CFArrayRef (*func_t)(int, uint32_t, CFStringRef);
+                func_t func = (func_t)symbol;
+                CFArrayRef result = func(g_connection, wid, group_cf);
+                
+                fprintf(rsp, "✅ Call succeeded! Result: %p\n", result);
+                
+                if (result) {
+                    CFTypeID type_id = CFGetTypeID(result);
+                    fprintf(rsp, "Result TypeID: %lu (CFArray=%lu, CFNumber=%lu)\n", 
+                            type_id, CFArrayGetTypeID(), CFNumberGetTypeID());
+                    
+                    if (type_id == CFArrayGetTypeID()) {
+                        CFIndex count = CFArrayGetCount(result);
+                        fprintf(rsp, "Array contains %ld items:\n\n", count);
+                        
+                        for (CFIndex i = 0; i < count && i < 50; ++i) {
+                            CFTypeRef item = CFArrayGetValueAtIndex(result, i);
+                            CFTypeID item_type = CFGetTypeID(item);
+                            
+                            fprintf(rsp, "  [%ld]: ", i);
+                            
+                            if (item_type == CFNumberGetTypeID()) {
+                                uint32_t window_id = 0;
+                                CFNumberGetValue((CFNumberRef)item, kCFNumberSInt32Type, &window_id);
+                                fprintf(rsp, "%u", window_id);
+                                
+                                struct window *win = window_manager_find_window(&g_window_manager, window_id);
+                                if (win) {
+                                    fprintf(rsp, " - %s", win->application->name);
+                                }
+                            } else {
+                                // Try raw pointer cast
+                                uint32_t window_id = (uint32_t)(uintptr_t)item;
+                                fprintf(rsp, "%u (raw, TypeID=%lu)", window_id, item_type);
+                                
+                                struct window *win = window_manager_find_window(&g_window_manager, window_id);
+                                if (win) {
+                                    fprintf(rsp, " - %s", win->application->name);
+                                }
+                            }
+                            fprintf(rsp, "\n");
+                        }
+                        
+                        if (count > 50) fprintf(rsp, "  ... (%ld more)\n", count - 50);
+                    } else {
+                        fprintf(rsp, "Result is not a CFArray. Description:\n");
+                        CFStringRef desc = CFCopyDescription(result);
+                        char buffer[1024];
+                        if (CFStringGetCString(desc, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+                            fprintf(rsp, "%s\n", buffer);
+                        }
+                        CFRelease(desc);
+                    }
+                    
+                    CFRelease(result);
+                } else {
+                    fprintf(rsp, "Result: NULL (group doesn't exist or window not in group)\n");
+                }
+                
+                CFRelease(group_cf);
+                
+            } @catch (NSException *exception) {
+                fprintf(rsp, "\n⚠️  EXCEPTION: %s\n", [[exception reason] UTF8String]);
+                fprintf(rsp, "\nPossible issues:\n");
+                fprintf(rsp, "  - Function signature mismatch\n");
+                fprintf(rsp, "  - Invalid group name for this macOS version\n");
+                fprintf(rsp, "  - Window not in required state\n");
+                fprintf(rsp, "\nTry group names: kCGSWindowGroupMoveGroup, kCGSWindowGroupWorkspace, etc.\n");
+            }
+            
+        } else {
+            fprintf(rsp, "⚠️  API '%s' is recognized but no handler implemented yet.\n", symbol_name);
+            fprintf(rsp, "Add a handler in handle_domain_debug() to call this API.\n");
+            fprintf(rsp, "\nTo add support, edit handle_domain_debug() and add a case like:\n");
+            fprintf(rsp, "  else if (strstr(symbol_name, \"YourAPI\")) { ... }\n");
+        }
+        
+        fprintf(rsp, "\n=== Call Complete ===\n");
+    } else if (token_equals(command, COMMAND_DEBUG_WINDOW_TAGS)) {
+        // Print comprehensive window iterator data for the focused window
+        // Usage: yabai -m debug --window-tags [flags]
+        // Flags (combine with +): basic, bounds, space, attrs, all
+        // Example: yabai -m debug --window-tags basic+bounds
+        
+        extern struct window_manager g_window_manager;
+        uint32_t wid = g_window_manager.focused_window_id;
+        
+        if (!wid) {
+            fprintf(rsp, "ERROR: No focused window\n");
+            return;
+        }
+        
+        // Parse flags from remaining message
+        struct token flags_token = get_token(&message);
+        char *flags = flags_token.text;
+        bool show_basic = false;
+        bool show_bounds = false;
+        bool show_space = false;
+        bool show_attrs = false;
+        
+        if (!token_is_valid(flags_token) || strstr(flags, "all")) {
+            show_basic = show_bounds = show_space = show_attrs = true;
+        } else {
+            if (strstr(flags, "basic")) show_basic = true;
+            if (strstr(flags, "bounds")) show_bounds = true;
+            if (strstr(flags, "space")) show_space = true;
+            if (strstr(flags, "attrs")) show_attrs = true;
+        }
+        
+        fprintf(rsp, "=== Window Iterator Data (WID: %d) ===\n\n", wid);
+        
+        // Create the iterator using the same pattern as window_tags()
+        CFArrayRef window_ref = cfarray_of_cfnumbers(&wid, sizeof(uint32_t), 1, kCFNumberSInt32Type);
+        CFTypeRef query = SLSWindowQueryWindows(g_connection, window_ref, 1);
+        
+        if (!query) {
+            fprintf(rsp, "ERROR: SLSWindowQueryWindows failed\n");
+            CFRelease(window_ref);
+            return;
+        }
+        
+        CFTypeRef iterator = SLSWindowQueryResultCopyWindows(query);
+        if (!iterator) {
+            fprintf(rsp, "ERROR: SLSWindowQueryResultCopyWindows failed\n");
+            CFRelease(query);
+            CFRelease(window_ref);
+            return;
+        }
+        
+        int count = SLSWindowIteratorGetCount(iterator);
+        fprintf(rsp, "Iterator Count: %d\n\n", count);
+        
+        if (count == 1 && SLSWindowIteratorAdvance(iterator)) {
+            
+            // BASIC INFO
+            if (show_basic) {
+                fprintf(rsp, "--- BASIC INFO ---\n");
+                
+                uint32_t iter_wid = SLSWindowIteratorGetWindowID(iterator);
+                fprintf(rsp, "  WindowID:        %d\n", iter_wid);
+                
+                uint32_t owner = SLSWindowIteratorGetOwner(iterator);
+                fprintf(rsp, "  Owner:           %d\n", owner);
+                
+                uint32_t parent = SLSWindowIteratorGetParentID(iterator);
+                fprintf(rsp, "  ParentID:        %d\n", parent);
+                
+                pid_t pid = SLSWindowIteratorGetPID(iterator);
+                fprintf(rsp, "  PID:             %d\n", pid);
+                
+                @try {
+                    ProcessSerialNumber psn = SLSWindowIteratorGetPSN(iterator);
+                    fprintf(rsp, "  PSN:             {%u, %u}\n", psn.highLongOfPSN, psn.lowLongOfPSN);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  PSN:             [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                uint64_t tags = SLSWindowIteratorGetTags(iterator);
+                fprintf(rsp, "  Tags:            0x%016llx\n", tags);
+                fprintf(rsp, "    Binary:        ");
+                for (int bit = 63; bit >= 0; bit--) {
+                    if (bit == 31) fprintf(rsp, " ");
+                    fprintf(rsp, "%d", (tags & (1ULL << bit)) ? 1 : 0);
+                }
+                fprintf(rsp, "\n");
+                
+                int level = SLSWindowIteratorGetLevel(iterator);
+                fprintf(rsp, "  Level:           %d\n", level);
+                
+                float alpha = SLSWindowIteratorGetAlpha(iterator);
+                fprintf(rsp, "  Alpha:           %.4f\n", alpha);
+                
+                @try {
+                    CFTypeID type_id = SLSWindowIteratorGetTypeID(iterator);
+                    fprintf(rsp, "  TypeID:          %lu\n", type_id);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  TypeID:          [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                fprintf(rsp, "\n");
+            }
+            
+            // BOUNDS INFO
+            if (show_bounds) {
+                fprintf(rsp, "--- BOUNDS INFO ---\n");
+                
+                CGRect bounds = SLSWindowIteratorGetBounds(iterator);
+                fprintf(rsp, "  Bounds:          {{%.2f, %.2f}, {%.2f, %.2f}}\n",
+                        bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height);
+                
+                @try {
+                    CGRect frame_bounds = SLSWindowIteratorGetFrameBounds(iterator);
+                    fprintf(rsp, "  FrameBounds:     {{%.2f, %.2f}, {%.2f, %.2f}}\n",
+                            frame_bounds.origin.x, frame_bounds.origin.y, 
+                            frame_bounds.size.width, frame_bounds.size.height);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  FrameBounds:     [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    CGRect last_bounds = SLSWindowIteratorGetLastNonEmptyFrameBounds(iterator);
+                    fprintf(rsp, "  LastNonEmpty:    {{%.2f, %.2f}, {%.2f, %.2f}}\n",
+                            last_bounds.origin.x, last_bounds.origin.y,
+                            last_bounds.size.width, last_bounds.size.height);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  LastNonEmpty:    [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    CGRect screen_rect = SLSWindowIteratorGetScreenRect(iterator);
+                    fprintf(rsp, "  ScreenRect:      {{%.2f, %.2f}, {%.2f, %.2f}}\n",
+                            screen_rect.origin.x, screen_rect.origin.y,
+                            screen_rect.size.width, screen_rect.size.height);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  ScreenRect:      [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    float radii[4];
+                    SLSWindowIteratorGetCornerRadii(iterator, radii);
+                    fprintf(rsp, "  CornerRadii:     [%.2f, %.2f, %.2f, %.2f]\n",
+                            radii[0], radii[1], radii[2], radii[3]);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  CornerRadii:     [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    float resolved_radii[4];
+                    SLSWindowIteratorGetResolvedCornerRadii(iterator, resolved_radii);
+                    fprintf(rsp, "  ResolvedRadii:   [%.2f, %.2f, %.2f, %.2f]\n",
+                            resolved_radii[0], resolved_radii[1], resolved_radii[2], resolved_radii[3]);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  ResolvedRadii:   [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    uint32_t corner_mask = SLSWindowIteratorGetCornerMaskFlags(iterator);
+                    fprintf(rsp, "  CornerMaskFlags: 0x%08x\n", corner_mask);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  CornerMaskFlags: [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    CGRect constraints = SLSWindowIteratorGetConstraints(iterator);
+                    fprintf(rsp, "  Constraints:     {{%.2f, %.2f}, {%.2f, %.2f}}\n",
+                            constraints.origin.x, constraints.origin.y,
+                            constraints.size.width, constraints.size.height);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  Constraints:     [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                fprintf(rsp, "\n");
+            }
+            
+            // SPACE INFO
+            if (show_space) {
+                fprintf(rsp, "--- SPACE INFO ---\n");
+                
+                // First, show what we know from standard APIs
+                uint64_t actual_sid = window_space(wid);
+                fprintf(rsp, "  ActualSpaceID:   %llu (from window_space())\n", actual_sid);
+                
+                // Now try the iterator methods
+                @try {
+                    uint64_t space_id = SLSWindowIteratorGetMatchingSpaceID(iterator);
+                    fprintf(rsp, "  MatchingSpaceID: %llu", space_id);
+                    if (space_id == 0) fprintf(rsp, " ⚠️  (ZERO - might not be set)");
+                    if (space_id == actual_sid) fprintf(rsp, " ✅ (matches actual!)");
+                    fprintf(rsp, "\n");
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  MatchingSpaceID: [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    uint32_t space_attrs = SLSWindowIteratorGetSpaceAttributes(iterator);
+                    fprintf(rsp, "  SpaceAttrs:      0x%08x", space_attrs);
+                    if (space_attrs == 0) fprintf(rsp, " ⚠️  (ZERO - might not be set)");
+                    fprintf(rsp, "\n");
+                    if (space_attrs != 0) {
+                        fprintf(rsp, "    Binary:        ");
+                        for (int bit = 31; bit >= 0; bit--) {
+                            if (bit == 15) fprintf(rsp, " ");
+                            fprintf(rsp, "%d", (space_attrs & (1U << bit)) ? 1 : 0);
+                        }
+                        fprintf(rsp, "\n");
+                    }
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  SpaceAttrs:      [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    uint32_t space_type = SLSWindowIteratorGetSpaceTypeMask(iterator);
+                    fprintf(rsp, "  SpaceTypeMask:   0x%08x", space_type);
+                    if (space_type == 0) fprintf(rsp, " ⚠️  (ZERO - might not be set)");
+                    fprintf(rsp, "\n");
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  SpaceTypeMask:   [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    int space_count = SLSWindowIteratorGetSpaceCount(iterator);
+                    fprintf(rsp, "  SpaceCount:      %d", space_count);
+                    if (space_count == 0) fprintf(rsp, " ⚠️  (ZERO - window might be on single space)");
+                    fprintf(rsp, "\n");
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  SpaceCount:      [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                fprintf(rsp, "\n  💡 NOTE: If these are all 0, it likely means:\n");
+                fprintf(rsp, "     - These fields aren't populated for single-window queries\n");
+                fprintf(rsp, "     - OR they don't exist on your macOS version\n");
+                fprintf(rsp, "     - OR Stage Manager uses completely different APIs\n");
+                
+                fprintf(rsp, "\n");
+            }
+            
+            // ATTRIBUTES
+            if (show_attrs) {
+                fprintf(rsp, "--- ATTRIBUTES ---\n");
+                
+                @try {
+                    uint32_t attributes = SLSWindowIteratorGetAttributes(iterator);
+                    fprintf(rsp, "  Attributes:      0x%08x\n", attributes);
+                    fprintf(rsp, "    Binary:        ");
+                    for (int bit = 31; bit >= 0; bit--) {
+                        if (bit == 15) fprintf(rsp, " ");
+                        fprintf(rsp, "%d", (attributes & (1U << bit)) ? 1 : 0);
+                    }
+                    fprintf(rsp, "\n");
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  Attributes:      [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                @try {
+                    int attached_count = SLSWindowIteratorGetAttachedWindowCount(iterator);
+                    fprintf(rsp, "  AttachedWinCnt:  %d\n", attached_count);
+                } @catch (NSException *e) {
+                    fprintf(rsp, "  AttachedWinCnt:  [exception: %s]\n", [[e reason] UTF8String]);
+                }
+                
+                fprintf(rsp, "\n");
+            }
+            
+        } else {
+            fprintf(rsp, "ERROR: Could not advance iterator or wrong count\n");
+        }
+        
+        CFRelease(iterator);
+        CFRelease(query);
+        CFRelease(window_ref);
+        
+        fprintf(rsp, "=== End Window Iterator Data ===\n");
+    } else if (token_equals(command, COMMAND_DEBUG_SPACE_ITERATOR)) {
+        // Test space iterator APIs via window query
+        // Usage: yabai -m debug --space-iterator [space_id]
+        
+        extern int g_connection;
+        
+        struct token sid_token = get_token(&message);
+        uint64_t sid = 0;
+        
+        if (token_is_valid(sid_token)) {
+            int sid_int;
+            if (token_is_positive_integer(sid_token, &sid_int)) {
+                sid = (uint64_t)sid_int;
+            }
+        }
+        
+        if (sid == 0) {
+            sid = space_manager_active_space();
+        }
+        
+        fprintf(rsp, "=== Space Iterator Test ===\n\n");
+        fprintf(rsp, "Testing Space ID: %llu\n\n", sid);
+        
+        // Get windows for this space first
+        uint64_t set_tags = 0;
+        uint64_t clear_tags = 0;
+        CFArrayRef space_ref = cfarray_of_cfnumbers(&sid, sizeof(uint64_t), 1, kCFNumberSInt64Type);
+        CFArrayRef window_list_ref = SLSCopyWindowsWithOptionsAndTags(g_connection, 0, space_ref, 0x7, &set_tags, &clear_tags);
+        
+        if (!window_list_ref) {
+            fprintf(rsp, "ERROR: SLSCopyWindowsWithOptionsAndTags returned NULL\n");
+            CFRelease(space_ref);
+            return;
+        }
+        
+        int window_count = CFArrayGetCount(window_list_ref);
+        fprintf(rsp, "Found %d windows on this space\n", window_count);
+        
+        if (window_count == 0) {
+            fprintf(rsp, "⚠️  No windows on this space, can't query space iterator\n");
+            CFRelease(window_list_ref);
+            CFRelease(space_ref);
+            return;
+        }
+        
+        // Create window query
+        CFTypeRef query = SLSWindowQueryWindows(g_connection, window_list_ref, window_count);
+        if (!query) {
+            fprintf(rsp, "ERROR: SLSWindowQueryWindows failed\n");
+            CFRelease(window_list_ref);
+            CFRelease(space_ref);
+            return;
+        }
+        
+        fprintf(rsp, "✅ Window query created\n\n");
+        
+        // Try multiple approaches to get space information
+        fprintf(rsp, "Attempting to extract space information...\n\n");
+        
+        // Approach 1: Try SLSWindowQueryResultGetSpaceCount with direct return
+        @try {
+            int space_count = SLSWindowQueryResultGetSpaceCount(query);
+            fprintf(rsp, "Approach 1 - SLSWindowQueryResultGetSpaceCount (direct): %d\n", space_count);
+        } @catch (NSException *e) {
+            fprintf(rsp, "Approach 1 - Exception: %s\n", [[e reason] UTF8String]);
+        }
+        
+        // Approach 2: Try calling SLSWindowQueryResultCopySpaces directly (might return CFArray)
+        @try {
+            fprintf(rsp, "\nApproach 2 - Calling SLSWindowQueryResultCopySpaces directly...\n");
+            CFTypeRef space_result = SLSWindowQueryResultCopySpaces(query);
+            
+            if (space_result) {
+                CFTypeID type_id = CFGetTypeID(space_result);
+                fprintf(rsp, "  Returned: %p (TypeID: %lu)\n", space_result, type_id);
+                fprintf(rsp, "  CFArray TypeID: %lu\n", CFArrayGetTypeID());
+                fprintf(rsp, "  CFNumber TypeID: %lu\n", CFNumberGetTypeID());
+                
+                if (type_id == CFArrayGetTypeID()) {
+                    CFIndex count = CFArrayGetCount((CFArrayRef)space_result);
+                    fprintf(rsp, "  ✅ It's a CFArray with %ld items!\n\n", count);
+                    
+                    for (CFIndex i = 0; i < count && i < 10; ++i) {
+                        CFTypeRef item = CFArrayGetValueAtIndex((CFArrayRef)space_result, i);
+                        CFTypeID item_type = CFGetTypeID(item);
+                        
+                        fprintf(rsp, "  Space #%ld:\n", i);
+                        if (item_type == CFNumberGetTypeID()) {
+                            uint64_t space_id = 0;
+                            CFNumberGetValue((CFNumberRef)item, kCFNumberSInt64Type, &space_id);
+                            fprintf(rsp, "    Space ID: %llu", space_id);
+                            if (space_id == sid) fprintf(rsp, " ✅ (MATCHES!)");
+                            fprintf(rsp, "\n");
+                        } else {
+                            fprintf(rsp, "    Type: %lu (not a number)\n", item_type);
+                        }
+                    }
+                    if (count > 10) fprintf(rsp, "  ... (%ld more)\n", count - 10);
+                } else {
+                    fprintf(rsp, "  Not a CFArray. Trying as iterator...\n\n");
+                    
+                    // Try using it as an iterator
+                    @try {
+                        int iter_count = SLSSpaceIteratorGetCount(space_result);
+                        fprintf(rsp, "  Iterator count: %d\n\n", iter_count);
+                        
+                        if (iter_count > 0) {
+                            int space_index = 0;
+                            while (SLSSpaceIteratorAdvance(space_result) && space_index < 10) {
+                                fprintf(rsp, "  --- SPACE #%d ---\n", space_index++);
+                                
+                                @try {
+                                    uint64_t iter_sid = SLSSpaceIteratorGetSpaceID(space_result);
+                                    fprintf(rsp, "    SpaceID:       %llu", iter_sid);
+                                    if (iter_sid == sid) fprintf(rsp, " ✅");
+                                    fprintf(rsp, "\n");
+                                } @catch (NSException *e) {
+                                    fprintf(rsp, "    SpaceID:       [exception]\n");
+                                }
+                                
+                                @try {
+                                    uint64_t attributes = SLSSpaceIteratorGetAttributes(space_result);
+                                    fprintf(rsp, "    Attributes:    0x%016llx\n", attributes);
+                                } @catch (NSException *e) {
+                                    fprintf(rsp, "    Attributes:    [exception]\n");
+                                }
+                                
+                                @try {
+                                    uint64_t parent_sid = SLSSpaceIteratorGetParentSpaceID(space_result);
+                                    fprintf(rsp, "    ParentSpaceID: %llu", parent_sid);
+                                    if (parent_sid != 0) fprintf(rsp, " 🔥 HAS PARENT!");
+                                    fprintf(rsp, "\n");
+                                } @catch (NSException *e) {
+                                    fprintf(rsp, "    ParentSpaceID: [exception]\n");
+                                }
+                                
+                                fprintf(rsp, "\n");
+                            }
+                        }
+                    } @catch (NSException *e) {
+                        fprintf(rsp, "  Iterator exception: %s\n", [[e reason] UTF8String]);
+                    }
+                }
+                
+                CFRelease(space_result);
+            } else {
+                fprintf(rsp, "  Returned NULL\n");
+            }
+        } @catch (NSException *e) {
+            fprintf(rsp, "Approach 2 - Exception: %s\n", [[e reason] UTF8String]);
+        }
+        
+        // Approach 3: Just try iterating through windows and see what spaces they report
+        fprintf(rsp, "\nApproach 3 - Checking spaces via window iterator...\n");
+        @try {
+            CFTypeRef window_iterator = SLSWindowQueryResultCopyWindows(query);
+            if (window_iterator) {
+                int wcount = SLSWindowIteratorGetCount(window_iterator);
+                fprintf(rsp, "  Window iterator has %d windows\n", wcount);
+                
+                // Collect unique space IDs
+                uint64_t unique_spaces[100];
+                int unique_count = 0;
+                
+                int checked = 0;
+                while (SLSWindowIteratorAdvance(window_iterator) && checked < 100) {
+                    checked++;
+                    
+                    @try {
+                        uint64_t match_sid = SLSWindowIteratorGetMatchingSpaceID(window_iterator);
+                        if (match_sid != 0) {
+                            // Check if we've seen this space
+                            bool found = false;
+                            for (int i = 0; i < unique_count; i++) {
+                                if (unique_spaces[i] == match_sid) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found && unique_count < 100) {
+                                unique_spaces[unique_count++] = match_sid;
+                            }
+                        }
+                    } @catch (NSException *e) {
+                        // Ignore
+                    }
+                }
+                
+                fprintf(rsp, "  Found %d unique space IDs from windows:\n", unique_count);
+                for (int i = 0; i < unique_count; i++) {
+                    fprintf(rsp, "    - %llu", unique_spaces[i]);
+                    if (unique_spaces[i] == sid) fprintf(rsp, " ✅ (matches query)");
+                    fprintf(rsp, "\n");
+                }
+                
+                CFRelease(window_iterator);
+            }
+        } @catch (NSException *e) {
+            fprintf(rsp, "Approach 3 - Exception: %s\n", [[e reason] UTF8String]);
+        }
+        
+        CFRelease(query);
+        CFRelease(window_list_ref);
+        CFRelease(space_ref);
+        
+        fprintf(rsp, "\n=== End Space Iterator Test ===\n");
+    } else if (token_equals(command, COMMAND_DEBUG_DISPLAY_HIERARCHY)) {
+        // Test display iterator APIs using dynamic lookup
+        // Usage: yabai -m debug --display-hierarchy
+        
+        extern int g_connection;
+        
+        fprintf(rsp, "=== Display Iterator API Discovery ===\n\n");
+        
+        // Test if display iterator functions exist using dynamic lookup
+        void *ptr_SLSManagedDisplayQueryDisplays = macho_find_symbol(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+            "_SLSManagedDisplayQueryDisplays"
+        );
+        void *ptr_SLSManagedDisplayIteratorCopyManagedSpaces = macho_find_symbol(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight", 
+            "_SLSManagedDisplayIteratorCopyManagedSpaces"
+        );
+        void *ptr_SLSManagedDisplayIteratorAdvance = macho_find_symbol(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+            "_SLSManagedDisplayIteratorAdvance"
+        );
+        
+        fprintf(rsp, "Display Iterator Function Discovery:\n");
+        fprintf(rsp, "  _SLSManagedDisplayQueryDisplays: %s (%p)\n", 
+                ptr_SLSManagedDisplayQueryDisplays ? "Found" : "Not Found", ptr_SLSManagedDisplayQueryDisplays);
+        fprintf(rsp, "  _SLSManagedDisplayIteratorCopyManagedSpaces: %s (%p)\n", 
+                ptr_SLSManagedDisplayIteratorCopyManagedSpaces ? "Found" : "Not Found", ptr_SLSManagedDisplayIteratorCopyManagedSpaces);
+        fprintf(rsp, "  _SLSManagedDisplayIteratorAdvance: %s (%p)\n", 
+                ptr_SLSManagedDisplayIteratorAdvance ? "Found" : "Not Found", ptr_SLSManagedDisplayIteratorAdvance);
+        
+        // First, show current display/space method
+        CFArrayRef displays = SLSCopyManagedDisplays(g_connection);
+        if (!displays) {
+            fprintf(rsp, "\nERROR: SLSCopyManagedDisplays failed\n");
+            return;
+        }
+        
+        int display_count = CFArrayGetCount(displays);
+        fprintf(rsp, "\nFound %d managed displays\n", display_count);
+        
+        // Show display spaces using current method  
+        CFArrayRef display_spaces_ref = SLSCopyManagedDisplaySpaces(g_connection);
+        if (display_spaces_ref) {
+            int display_spaces_count = CFArrayGetCount(display_spaces_ref);
+            fprintf(rsp, "Display spaces array has %d entries\n\n", display_spaces_count);
+            
+            for (int i = 0; i < display_spaces_count && i < 3; ++i) {
+                CFDictionaryRef display_ref = CFArrayGetValueAtIndex(display_spaces_ref, i);
+                CFStringRef identifier = CFDictionaryGetValue(display_ref, CFSTR("Display Identifier"));
+                CFArrayRef spaces_ref = CFDictionaryGetValue(display_ref, CFSTR("Spaces"));
+                
+                if (spaces_ref) {
+                    int space_count = CFArrayGetCount(spaces_ref);
+                    fprintf(rsp, "Display %d: %d spaces\n", i, space_count);
+                    
+                    // Show first few space IDs
+                    for (int j = 0; j < space_count && j < 10; j++) {
+                        CFNumberRef space_num = CFArrayGetValueAtIndex(spaces_ref, j);
+                        uint64_t space_id;
+                        CFNumberGetValue(space_num, kCFNumberSInt64Type, &space_id);
+                        fprintf(rsp, "  Space[%d]: %llu\n", j, space_id);
+                    }
+                    if (space_count > 10) fprintf(rsp, "  ... (%d more)\n", space_count - 10);
+                } else {
+                    fprintf(rsp, "Display %d: No spaces array\n", i);
+                }
+                fprintf(rsp, "\n");
+            }
+            
+            CFRelease(display_spaces_ref);
+        } else {
+            fprintf(rsp, "ERROR: SLSCopyManagedDisplaySpaces failed\n");
+        }
+        
+        CFRelease(displays);
+        
+        fprintf(rsp, "\n=== End Display Hierarchy Test ===\n");
+        fprintf(rsp, "\n💡 KEY: SLSManagedDisplayIteratorCopyManagedSpaces is likely the Stage Manager function!\n");
+        fprintf(rsp, "    Compare the 'Managed Spaces' output with Stage Manager on vs off!\n");
+    } else {
+        daemon_fail(rsp, "unknown command '%.*s' for domain '%.*s'\n", command.length, command.text, domain.length, domain.text);
+    }
+}
+
 void handle_message(FILE *rsp, char *message)
 {
     struct token domain = get_token(&message);
@@ -3110,6 +4044,8 @@ void handle_message(FILE *rsp, char *message)
         handle_domain_rule(rsp, domain, message);
     } else if (token_equals(domain, DOMAIN_SIGNAL)) {
         handle_domain_signal(rsp, domain, message);
+    } else if (token_equals(domain, DOMAIN_DEBUG)) {
+        handle_domain_debug(rsp, domain, message);
     } else {
         daemon_fail(rsp, "unknown domain '%.*s'\n", domain.length, domain.text);
     }

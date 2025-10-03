@@ -741,6 +741,9 @@ static void window_manager_animate_windows_lockedbounds_timer_handler(void *data
 #define ANIMATION_EASING_TYPE_ENTRY(value) case value##_type: mt = value(t); break;
         ANIMATION_EASING_TYPE_LIST
 #undef ANIMATION_EASING_TYPE_ENTRY
+    default:
+        mt = t; // Linear fallback
+        break;
     }
 
     // Interpolate and send bounds for each window
@@ -825,12 +828,6 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
         context->animation_list[i].end_y = window_list[i].y;
         context->animation_list[i].end_w = window_list[i].w;
         context->animation_list[i].end_h = window_list[i].h;
-        
-        context->animation_list[i].wid,
-        context->animation_list[i].start_x, context->animation_list[i].start_y,
-        context->animation_list[i].start_w, context->animation_list[i].start_h,
-        context->animation_list[i].end_x, context->animation_list[i].end_y,
-        context->animation_list[i].end_w, context->animation_list[i].end_h;
     }
     
     // Mark windows as animating in the table (prevents duplicate animations)

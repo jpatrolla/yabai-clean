@@ -1,0 +1,13 @@
+CompileFlags:
+  CompilationDatabase: .
+
+Diagnostics:
+  Suppress:
+    - unused-includes
+  UnusedIncludes: None
+  ClangTidy:
+    Remove: '*'
+  
+Index:
+  Background: Build
+
