@@ -712,6 +712,7 @@ struct window_lockedbounds_animation {
     uint32_t wid;
     float start_x, start_y, start_w, start_h;
     float end_x, end_y, end_w, end_h;
+    float min_opacity;
     bool skip;
 };
 
@@ -721,17 +722,47 @@ struct window_lockedbounds_context {
     double animation_duration;
     enum animation_easing_type animation_easing;
     uint64_t animation_start_time;
-    dispatch_source_t timer;
+    uint64_t animation_clock;
 };
 
-static void window_manager_animate_windows_lockedbounds_timer_handler(void *data)
+static CVReturn window_manager_animate_windows_lockedbounds_callback(CVDisplayLinkRef link, const CVTimeStamp *now, const CVTimeStamp *output_time, CVOptionFlags flags, CVOptionFlags *flags_out, void *data)
 {
     struct window_lockedbounds_context *context = data;
     
     int animation_count = context->animation_count;
     
-    uint64_t now = mach_absolute_time();
-    double t = (double)(now - context->animation_start_time) / (double)(context->animation_duration * g_cv_host_clock_frequency);
+    // Early skip detection - check if all windows are skipped BEFORE any calculations
+    bool all_skipped = true;
+    for (int i = 0; i < animation_count; ++i) {
+        if (!__atomic_load_n(&context->animation_list[i].skip, __ATOMIC_RELAXED)) {
+            all_skipped = false;
+            break;
+        }
+    }
+    
+    if (all_skipped) {
+        // All animations were cancelled - clean up immediately without any interpolation
+        pthread_mutex_lock(&g_window_manager.window_animations_lock);
+        for (int i = 0; i < animation_count; ++i) {
+            // Remove from table (new animation may have replaced us)
+            struct window_lockedbounds_context *current = table_find(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+            if (current == context) {
+                table_remove(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+            }
+        }
+        pthread_mutex_unlock(&g_window_manager.window_animations_lock);
+        
+        CVDisplayLinkStop(link);
+        CVDisplayLinkRelease(link);
+        free(context->animation_list);
+        free(context);
+        return kCVReturnSuccess;
+    }
+    
+    uint64_t current_clock = output_time->hostTime;
+    if (!context->animation_clock) context->animation_clock = now->hostTime;
+    
+    double t = (double)(current_clock - context->animation_clock) / (double)(context->animation_duration * g_cv_host_clock_frequency);
     if (t <= 0.0) t = 0.0f;
     if (t >= 1.0) t = 1.0f;
 
@@ -756,37 +787,9 @@ static void window_manager_animate_windows_lockedbounds_timer_handler(void *data
             context->animation_list[i].wid,
             g_window_manager.window_opacity_duration,  // fade_duration
             cx, cy, cw, ch,
-            g_window_manager.window_animation_min_opacity,
+            context->animation_list[i].min_opacity,  // Use per-window opacity
             mt  // progress (0.0 to 1.0, using eased value)
         );
-    }
-
-    // Check if all windows are skipped - if so, clean up immediately
-    bool all_skipped = true;
-    for (int i = 0; i < animation_count; ++i) {
-        if (!__atomic_load_n(&context->animation_list[i].skip, __ATOMIC_RELAXED)) {
-            all_skipped = false;
-            break;
-        }
-    }
-    
-    if (all_skipped) {
-        // All animations were cancelled - clean up
-        pthread_mutex_lock(&g_window_manager.window_animations_lock);
-        for (int i = 0; i < animation_count; ++i) {
-            // Remove from table (new animation may have replaced us)
-            struct window_lockedbounds_context *current = table_find(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
-            if (current == context) {
-                table_remove(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
-            }
-        }
-        pthread_mutex_unlock(&g_window_manager.window_animations_lock);
-        
-        dispatch_source_cancel(context->timer);
-        dispatch_release(context->timer);
-        free(context->animation_list);
-        free(context);
-        return;
     }
 
     if (t >= 1.0f) {
@@ -800,13 +803,18 @@ static void window_manager_animate_windows_lockedbounds_timer_handler(void *data
             CGRect current_bounds;
             SLSGetWindowBounds(g_connection, context->animation_list[i].wid, &current_bounds);
             
-            // Allow 1px tolerance for floating point comparison
-            bool x_match = fabs(current_bounds.origin.x - context->animation_list[i].end_x) < 1.0f;
-            bool y_match = fabs(current_bounds.origin.y - context->animation_list[i].end_y) < 1.0f;
-            bool w_match = fabs(current_bounds.size.width - context->animation_list[i].end_w) < 1.0f;
-            bool h_match = fabs(current_bounds.size.height - context->animation_list[i].end_h) < 1.0f;
+            // Use SIMD-friendly distance check instead of 4 separate comparisons
+            // Calculate squared distance for position and size differences
+            float dx = current_bounds.origin.x - context->animation_list[i].end_x;
+            float dy = current_bounds.origin.y - context->animation_list[i].end_y;
+            float dw = current_bounds.size.width - context->animation_list[i].end_w;
+            float dh = current_bounds.size.height - context->animation_list[i].end_h;
             
-            if (!x_match || !y_match || !w_match || !h_match) {
+            float distance_squared = dx*dx + dy*dy + dw*dw + dh*dh;
+            // Tolerance: 1px per dimension → sqrt(4 * 1^2) = 2.0 → squared = 4.0
+            bool frame_match = distance_squared < 4.0f;
+            
+            if (!frame_match) {
                 all_frames_match = false;
                 break;
             }
@@ -829,15 +837,17 @@ static void window_manager_animate_windows_lockedbounds_timer_handler(void *data
             }
             pthread_mutex_unlock(&g_window_manager.window_animations_lock);
             
-            dispatch_source_cancel(context->timer);
-            dispatch_release(context->timer);
+            CVDisplayLinkStop(link);
+            CVDisplayLinkRelease(link);
             free(context->animation_list);
             free(context);
         } else {
-            // Frames don't match yet - keep checking (timer continues)
+            // Frames don't match yet - keep checking (callback continues)
             // This gives the AX API time to catch up
         }
     }
+    
+    return kCVReturnSuccess;
 }
 
 void window_manager_animate_windows_lockedbounds_async(struct window_capture *window_list, int window_count)
@@ -877,6 +887,7 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
     context->animation_duration = g_window_manager.window_animation_duration;
     context->animation_easing   = g_window_manager.window_animation_easing;
     context->animation_start_time = mach_absolute_time();
+    context->animation_clock    = 0;
 
     // Setup animation data
     for (int i = 0; i < window_count; ++i) {
@@ -941,12 +952,21 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
     
     // Send initial locked bounds for all windows FIRST - locks visual position at start
     for (int i = 0; i < window_count; ++i) {
+        // Calculate movement distance to determine if opacity fade is worthwhile
+        float dx = context->animation_list[i].end_x - context->animation_list[i].start_x;
+        float dy = context->animation_list[i].end_y - context->animation_list[i].start_y;
+        float distance = sqrtf(dx*dx + dy*dy);
+        
+        // Only apply opacity fade for significant movements (>50px)
+        // Small adjustments look better without the fade effect
+        context->animation_list[i].min_opacity = (distance > 50.0f) ? g_window_manager.window_animation_min_opacity : 1.0f;
+        
         scripting_addition_animate_with_lockedbounds(
             context->animation_list[i].wid,
             g_window_manager.window_opacity_duration,  // fade_duration
             context->animation_list[i].start_x, context->animation_list[i].start_y,
             context->animation_list[i].start_w, context->animation_list[i].start_h,
-            g_window_manager.window_animation_min_opacity,
+            context->animation_list[i].min_opacity,
             0.0f  // progress = 0.0 at start
         );
     }
@@ -961,18 +981,27 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
                                         context->animation_list[i].end_h);
     }
 
-    // Create and start dispatch timer at ~60fps
-    context->timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-    dispatch_source_set_event_handler_f(context->timer, window_manager_animate_windows_lockedbounds_timer_handler);
-    dispatch_set_context(context->timer, context);
+    // Create and start CVDisplayLink for smooth frame-synced animation
+    CVDisplayLinkRef link;
+    CVReturn cv_result = CVDisplayLinkCreateWithActiveCGDisplays(&link);
     
-    // Fire every ~16ms (60fps)
-    dispatch_source_set_timer(context->timer, 
-                             dispatch_time(DISPATCH_TIME_NOW, 0),
-                             16 * NSEC_PER_MSEC,
-                             2 * NSEC_PER_MSEC);
+    if (cv_result != kCVReturnSuccess) {
+        // Failed to create display link - fallback to immediate positioning
+        // Clean up animation context and clear LockedBounds
+        pthread_mutex_lock(&g_window_manager.window_animations_lock);
+        for (int i = 0; i < window_count; ++i) {
+            scripting_addition_clear_lockedbounds(context->animation_list[i].wid);
+            table_remove(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+        }
+        pthread_mutex_unlock(&g_window_manager.window_animations_lock);
+        
+        free(context->animation_list);
+        free(context);
+        return;
+    }
     
-    dispatch_resume(context->timer);
+    CVDisplayLinkSetOutputCallback(link, window_manager_animate_windows_lockedbounds_callback, context);
+    CVDisplayLinkStart(link);
 }
 
 void window_manager_animate_window_list(struct window_capture *window_list, int window_count)
