@@ -30,4 +30,19 @@ bool scripting_addition_move_window_to_space(uint64_t sid, uint32_t wid);
 bool scripting_addition_animate_with_lockedbounds(uint32_t wid, float fade_duration, float cx, float cy, float cw, float ch, float min_opacity, float progress);
 bool scripting_addition_clear_lockedbounds(uint32_t wid);
 
+// Batch animation structure
+#define SA_BATCH_LOCKEDBOUNDS_MAX 128
+struct sa_lockedbounds_batch {
+    uint32_t count;
+    float fade_duration;
+    struct {
+        uint32_t wid;
+        float x, y, w, h;
+        float min_opacity;
+        float progress;
+    } windows[SA_BATCH_LOCKEDBOUNDS_MAX];
+};
+
+bool scripting_addition_batch_animate_with_lockedbounds(struct sa_lockedbounds_batch *batch);
+
 #endif

@@ -563,6 +563,25 @@ bool scripting_addition_clear_lockedbounds(uint32_t wid)
     return sa_payload_send(SA_OPCODE_WINDOW_LOCKEDBOUNDS_CLEAR);
 }
 
+bool scripting_addition_batch_animate_with_lockedbounds(struct sa_lockedbounds_batch *batch)
+{
+    sa_payload_init();
+    pack(batch->count);
+    pack(batch->fade_duration);
+    
+    for (uint32_t i = 0; i < batch->count; ++i) {
+        pack(batch->windows[i].wid);
+        pack(batch->windows[i].x);
+        pack(batch->windows[i].y);
+        pack(batch->windows[i].w);
+        pack(batch->windows[i].h);
+        pack(batch->windows[i].min_opacity);
+        pack(batch->windows[i].progress);
+    }
+    
+    return sa_payload_send(SA_OPCODE_WINDOW_LOCKEDBOUNDS_BATCH);
+}
+
 bool scripting_addition_swap_window_proxy_in(struct window_animation *animation_list, int animation_count)
 {
     uint32_t dummy_wid = 0;

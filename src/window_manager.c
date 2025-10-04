@@ -774,22 +774,33 @@ static CVReturn window_manager_animate_windows_lockedbounds_callback(CVDisplayLi
 #undef ANIMATION_EASING_TYPE_ENTRY
     }
 
-    // Interpolate and send bounds for each window
+    // Build batch for all windows in a single IPC call
+    struct sa_lockedbounds_batch batch;
+    batch.count = 0;
+    batch.fade_duration = g_window_manager.window_opacity_duration;
+    
     for (int i = 0; i < animation_count; ++i) {
         if (__atomic_load_n(&context->animation_list[i].skip, __ATOMIC_RELAXED)) continue;
+        if (batch.count >= SA_BATCH_LOCKEDBOUNDS_MAX) break;
 
         float cx = lerp(context->animation_list[i].start_x, mt, context->animation_list[i].end_x);
         float cy = lerp(context->animation_list[i].start_y, mt, context->animation_list[i].end_y);
         float cw = lerp(context->animation_list[i].start_w, mt, context->animation_list[i].end_w);
         float ch = lerp(context->animation_list[i].start_h, mt, context->animation_list[i].end_h);
         
-        scripting_addition_animate_with_lockedbounds(
-            context->animation_list[i].wid,
-            g_window_manager.window_opacity_duration,  // fade_duration
-            cx, cy, cw, ch,
-            context->animation_list[i].min_opacity,  // Use per-window opacity
-            mt  // progress (0.0 to 1.0, using eased value)
-        );
+        batch.windows[batch.count].wid = context->animation_list[i].wid;
+        batch.windows[batch.count].x = cx;
+        batch.windows[batch.count].y = cy;
+        batch.windows[batch.count].w = cw;
+        batch.windows[batch.count].h = ch;
+        batch.windows[batch.count].min_opacity = context->animation_list[i].min_opacity;
+        batch.windows[batch.count].progress = mt;
+        batch.count++;
+    }
+    
+    // Single IPC call for all windows
+    if (batch.count > 0) {
+        scripting_addition_batch_animate_with_lockedbounds(&batch);
     }
 
     if (t >= 1.0f) {
@@ -950,8 +961,14 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
     }
     pthread_mutex_unlock(&g_window_manager.window_animations_lock);
     
-    // Send initial locked bounds for all windows FIRST - locks visual position at start
+    // Build batch for initial locked bounds - locks visual position at start
+    struct sa_lockedbounds_batch initial_batch;
+    initial_batch.count = 0;
+    initial_batch.fade_duration = g_window_manager.window_opacity_duration;
+    
     for (int i = 0; i < window_count; ++i) {
+        if (initial_batch.count >= SA_BATCH_LOCKEDBOUNDS_MAX) break;
+        
         // Calculate movement distance to determine if opacity fade is worthwhile
         float dx = context->animation_list[i].end_x - context->animation_list[i].start_x;
         float dy = context->animation_list[i].end_y - context->animation_list[i].start_y;
@@ -961,14 +978,19 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
         // Small adjustments look better without the fade effect
         context->animation_list[i].min_opacity = (distance > 50.0f) ? g_window_manager.window_animation_min_opacity : 1.0f;
         
-        scripting_addition_animate_with_lockedbounds(
-            context->animation_list[i].wid,
-            g_window_manager.window_opacity_duration,  // fade_duration
-            context->animation_list[i].start_x, context->animation_list[i].start_y,
-            context->animation_list[i].start_w, context->animation_list[i].start_h,
-            context->animation_list[i].min_opacity,
-            0.0f  // progress = 0.0 at start
-        );
+        initial_batch.windows[initial_batch.count].wid = context->animation_list[i].wid;
+        initial_batch.windows[initial_batch.count].x = context->animation_list[i].start_x;
+        initial_batch.windows[initial_batch.count].y = context->animation_list[i].start_y;
+        initial_batch.windows[initial_batch.count].w = context->animation_list[i].start_w;
+        initial_batch.windows[initial_batch.count].h = context->animation_list[i].start_h;
+        initial_batch.windows[initial_batch.count].min_opacity = context->animation_list[i].min_opacity;
+        initial_batch.windows[initial_batch.count].progress = 0.0f;
+        initial_batch.count++;
+    }
+    
+    // Single IPC call to set initial bounds for all windows
+    if (initial_batch.count > 0) {
+        scripting_addition_batch_animate_with_lockedbounds(&initial_batch);
     }
 
     // NOW set final frames via AX - window moves internally but LockedBounds keeps it visually at start

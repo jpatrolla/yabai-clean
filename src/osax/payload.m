@@ -46,7 +46,7 @@
 #define unpack(v) memcpy(&v, message, sizeof(v)); message += sizeof(v)
 #define lerp(a, t, b) (((1.0-t)*a) + (t*b))
 extern CGError SLSTransactionSetWindowTransform(CFTypeRef transaction, uint32_t wid, int unknown, int unknown2, CGAffineTransform t);
-#define TRANSITION_SIZE_THRESHOLD 0.45f  // If current width < 45% of final width
+#define TRANSITION_SIZE_THRESHOLD 0.60f  // If current width < 45% of final width
 #define TRANSITION_MIN_OPACITY 0.7f      // Clamp opacity to minimum 70%
 
 extern int SLSMainConnectionID(void);
@@ -62,6 +62,7 @@ extern CGError SLSGetWindowBounds(int cid, uint32_t wid, CGRect *frame);
 extern CGError SLSGetWindowTransform(int cid, uint32_t wid, CGAffineTransform *t);
 extern CGError SLSSetWindowTransform(int cid, uint32_t wid, CGAffineTransform t);
 extern CGError SLSTransactionSetWindowAlpha(CFTypeRef transaction, uint32_t wid, float alpha);
+extern CGError SLSTransactionSetWindowAlphaAnimated(CFTypeRef transaction, uint32_t wid, float alpha, float duration);
 extern CGError SLSTransactionSetWindowLockedBounds(CFTypeRef transaction, uint32_t wid, CGRect bounds);
 extern CGError SLSTransactionClearWindowLockedBounds(CFTypeRef transaction, uint32_t wid);
 extern CGError SLSOrderWindow(int cid, uint32_t wid, int order, uint32_t rel_wid);
@@ -679,7 +680,8 @@ static void do_window_lockedbounds_animation(char *message)
     if (fade_duration > 0.0f) {
         // Calculate alpha based on progress: lerp from min_opacity to 1.0
         float alpha = min_opacity + (1.0f - min_opacity) * progress;
-        SLSTransactionSetWindowSystemAlpha(transaction, wid, alpha);
+        // Use animated alpha transition for smooth opacity fades
+        SLSTransactionSetWindowAlphaAnimated(transaction, wid, alpha, (fade_duration*2));
     }
     
     SLSTransactionCommit(transaction, 1);
@@ -697,6 +699,53 @@ static void do_window_lockedbounds_clear(char *message)
     
     CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
     SLSTransactionClearWindowLockedBounds(transaction, wid);
+    SLSTransactionCommit(transaction, 1);
+    CFRelease(transaction);
+}
+
+static void do_window_lockedbounds_batch(char *message)
+{
+    uint32_t count;
+    float fade_duration;
+    
+    unpack(count);
+    unpack(fade_duration);
+    
+    if (count == 0 || count > 128) {
+        return;
+    }
+    
+    // Create single transaction for all windows
+    CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
+    
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t wid;
+        float x, y, w, h, min_opacity, progress;
+        
+        unpack(wid);
+        unpack(x);
+        unpack(y);
+        unpack(w);
+        unpack(h);
+        unpack(min_opacity);
+        unpack(progress);
+        
+        if (!wid) continue;
+        
+        // Set locked bounds for this window
+        CGRect bounds = CGRectMake(x, y, w, h);
+        SLSTransactionSetWindowLockedBounds(transaction, wid, bounds);
+        
+        // Calculate opacity based on progress and min_opacity
+        // Progress goes from 0.0 (start) to 1.0 (end)
+        // Opacity: start at min_opacity, fade to 1.0 at midpoint, back to min_opacity at end
+        float opacity = 1.0f - ((1.0f - min_opacity) * (1.0f - fabsf(progress - 0.5f) * 2.0f));
+        
+        // Use animated alpha transition for smooth opacity fades
+        SLSTransactionSetWindowAlphaAnimated(transaction, wid, opacity, fade_duration*2);
+    }
+    
+    // Commit all changes at once
     SLSTransactionCommit(transaction, 1);
     CFRelease(transaction);
 }
@@ -1075,6 +1124,9 @@ static void handle_message(int sockfd, char *message)
     } break;
     case SA_OPCODE_WINDOW_LOCKEDBOUNDS_CLEAR: {
         do_window_lockedbounds_clear(message);
+    } break;
+    case SA_OPCODE_WINDOW_LOCKEDBOUNDS_BATCH: {
+        do_window_lockedbounds_batch(message);
     } break;
     case SA_OPCODE_WINDOW_SWAP_PROXY_IN: {
         do_window_swap_proxy_in(message);
