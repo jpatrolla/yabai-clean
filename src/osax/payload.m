@@ -667,14 +667,13 @@ static void do_window_lockedbounds_animation(char *message)
     
     CGRect current_frame = { .origin={cx, cy}, .size={cw, ch}};
     
-    NSLog(@"testing xxx");
     // Always set the locked bounds for animation
-    if (progress < 1.0f) {
+    //if (progress < 1.0f) {
         SLSTransactionSetWindowLockedBounds(transaction, wid, current_frame);
-    } else {
+    //} else {
         // Animation complete - clear locked bounds
-        SLSTransactionClearWindowLockedBounds(transaction, wid);
-    }
+        //SLSTransactionClearWindowLockedBounds(transaction, wid);
+    //}
     
     // Apply fade animation if enabled (fade_duration > 0.0)
     if (fade_duration > 0.0f) {

@@ -761,6 +761,34 @@ static void window_manager_animate_windows_lockedbounds_timer_handler(void *data
         );
     }
 
+    // Check if all windows are skipped - if so, clean up immediately
+    bool all_skipped = true;
+    for (int i = 0; i < animation_count; ++i) {
+        if (!__atomic_load_n(&context->animation_list[i].skip, __ATOMIC_RELAXED)) {
+            all_skipped = false;
+            break;
+        }
+    }
+    
+    if (all_skipped) {
+        // All animations were cancelled - clean up
+        pthread_mutex_lock(&g_window_manager.window_animations_lock);
+        for (int i = 0; i < animation_count; ++i) {
+            // Remove from table (new animation may have replaced us)
+            struct window_lockedbounds_context *current = table_find(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+            if (current == context) {
+                table_remove(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+            }
+        }
+        pthread_mutex_unlock(&g_window_manager.window_animations_lock);
+        
+        dispatch_source_cancel(context->timer);
+        dispatch_release(context->timer);
+        free(context->animation_list);
+        free(context);
+        return;
+    }
+
     if (t >= 1.0f) {
         // Animation complete - verify frames before clearing LockedBounds
         bool all_frames_match = true;
@@ -792,7 +820,12 @@ static void window_manager_animate_windows_lockedbounds_timer_handler(void *data
                 
                 // Clear LockedBounds - window is now at final position
                 scripting_addition_clear_lockedbounds(context->animation_list[i].wid);
-                table_remove(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+                
+                // Only remove if we're still the active animation for this window
+                struct window_lockedbounds_context *current = table_find(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+                if (current == context) {
+                    table_remove(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+                }
             }
             pthread_mutex_unlock(&g_window_manager.window_animations_lock);
             
@@ -810,21 +843,29 @@ static void window_manager_animate_windows_lockedbounds_timer_handler(void *data
 void window_manager_animate_windows_lockedbounds_async(struct window_capture *window_list, int window_count)
 {
     
-    // GUARD: Check if any windows are already being animated
+    // Check if any windows are already being animated and capture their current visual state
     pthread_mutex_lock(&g_window_manager.window_animations_lock);
+    
+    // Track which windows are currently animating and their contexts
+    struct window_lockedbounds_context *existing_contexts[window_count];
+    bool has_existing[window_count];
+    memset(has_existing, 0, sizeof(has_existing));
+    
     for (int i = 0; i < window_count; ++i) {
-        if (table_find(&g_window_manager.window_animations_table, &window_list[i].window->id)) {
-            pthread_mutex_unlock(&g_window_manager.window_animations_lock);
-       
-            // Fallback to immediate positioning for all windows
-            for (int j = 0; j < window_count; ++j) {
-                window_manager_set_window_frame(window_list[j].window, 
-                                              window_list[j].x, 
-                                              window_list[j].y, 
-                                              window_list[j].w, 
-                                              window_list[j].h);
+        struct window_lockedbounds_context *existing = table_find(&g_window_manager.window_animations_table, &window_list[i].window->id);
+        if (existing) {
+            has_existing[i] = true;
+            existing_contexts[i] = existing;
+            
+            // Mark the existing animation for cancellation (timer will clean up)
+            for (int j = 0; j < existing->animation_count; ++j) {
+                if (existing->animation_list[j].wid == window_list[i].window->id) {
+                    __atomic_store_n(&existing->animation_list[j].skip, true, __ATOMIC_RELEASE);
+                    break;
+                }
             }
-            return;
+        } else {
+            existing_contexts[i] = NULL;
         }
     }
     pthread_mutex_unlock(&g_window_manager.window_animations_lock);
@@ -843,12 +884,42 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
         context->animation_list[i].wid    = window_list[i].window->id;
         context->animation_list[i].skip   = false;
         
-        // Get current window frame as start position
-        CGRect frame = window_ax_frame(window_list[i].window);
-        context->animation_list[i].start_x = frame.origin.x;
-        context->animation_list[i].start_y = frame.origin.y;
-        context->animation_list[i].start_w = frame.size.width;
-        context->animation_list[i].start_h = frame.size.height;
+        // If window was already animating, use its current VISUAL position as the start
+        if (has_existing[i] && existing_contexts[i]) {
+            // Find the animation in the existing context
+            for (int j = 0; j < existing_contexts[i]->animation_count; ++j) {
+                if (existing_contexts[i]->animation_list[j].wid == window_list[i].window->id) {
+                    // Calculate current progress of existing animation
+                    uint64_t now = mach_absolute_time();
+                    double t = (double)(now - existing_contexts[i]->animation_start_time) / 
+                               (double)(existing_contexts[i]->animation_duration * g_cv_host_clock_frequency);
+                    if (t > 1.0) t = 1.0;
+                    if (t < 0.0) t = 0.0;
+                    
+                    // Apply easing to get visual progress
+                    float mt;
+                    switch (existing_contexts[i]->animation_easing) {
+#define ANIMATION_EASING_TYPE_ENTRY(value) case value##_type: mt = value(t); break;
+                        ANIMATION_EASING_TYPE_LIST
+#undef ANIMATION_EASING_TYPE_ENTRY
+                    }
+                    
+                    // Interpolate to get current visual position
+                    context->animation_list[i].start_x = lerp(existing_contexts[i]->animation_list[j].start_x, mt, existing_contexts[i]->animation_list[j].end_x);
+                    context->animation_list[i].start_y = lerp(existing_contexts[i]->animation_list[j].start_y, mt, existing_contexts[i]->animation_list[j].end_y);
+                    context->animation_list[i].start_w = lerp(existing_contexts[i]->animation_list[j].start_w, mt, existing_contexts[i]->animation_list[j].end_w);
+                    context->animation_list[i].start_h = lerp(existing_contexts[i]->animation_list[j].start_h, mt, existing_contexts[i]->animation_list[j].end_h);
+                    break;
+                }
+            }
+        } else {
+            // No existing animation - use current AX frame as start position
+            CGRect frame = window_ax_frame(window_list[i].window);
+            context->animation_list[i].start_x = frame.origin.x;
+            context->animation_list[i].start_y = frame.origin.y;
+            context->animation_list[i].start_w = frame.size.width;
+            context->animation_list[i].start_h = frame.size.height;
+        }
         
         // Target position
         context->animation_list[i].end_x = window_list[i].x;
@@ -858,12 +929,13 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
         
     }
     
-    // Mark windows as animating in the table (prevents duplicate animations)
+    // Mark windows as animating in the table (replacing old entries if present)
     pthread_mutex_lock(&g_window_manager.window_animations_lock);
     for (int i = 0; i < window_count; ++i) {
-        // Add a dummy entry to prevent duplicate animations
-        static struct window_animation dummy_animation = {0};
-        table_add(&g_window_manager.window_animations_table, &window_list[i].window->id, &dummy_animation);
+        // Remove existing entry if present (will be cleaned up by old timer)
+        table_remove(&g_window_manager.window_animations_table, &window_list[i].window->id);
+        // Add new context
+        table_add(&g_window_manager.window_animations_table, &window_list[i].window->id, context);
     }
     pthread_mutex_unlock(&g_window_manager.window_animations_lock);
     
