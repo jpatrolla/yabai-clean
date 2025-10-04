@@ -688,6 +688,21 @@ static void do_window_lockedbounds_animation(char *message)
 }
 
 
+static void do_window_lockedbounds_clear(char *message)
+{
+    uint32_t wid;
+    unpack(wid);
+    if (!wid) {
+        return;
+    }
+    
+    CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
+    SLSTransactionClearWindowLockedBounds(transaction, wid);
+    SLSTransactionCommit(transaction, 1);
+    CFRelease(transaction);
+}
+
+
 static void do_window_move(char *message)
 {
     uint32_t wid;
@@ -1058,7 +1073,10 @@ static void handle_message(int sockfd, char *message)
     } break;
     case SA_OPCODE_WINDOW_LOCKEDBOUNDS_ANIMATE: {
         do_window_lockedbounds_animation(message);
-    }
+    } break;
+    case SA_OPCODE_WINDOW_LOCKEDBOUNDS_CLEAR: {
+        do_window_lockedbounds_clear(message);
+    } break;
     case SA_OPCODE_WINDOW_SWAP_PROXY_IN: {
         do_window_swap_proxy_in(message);
     } break;

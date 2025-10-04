@@ -556,6 +556,13 @@ bool scripting_addition_animate_with_lockedbounds(uint32_t wid, float fade_durat
     return sa_payload_send(SA_OPCODE_WINDOW_LOCKEDBOUNDS_ANIMATE);
 }
 
+bool scripting_addition_clear_lockedbounds(uint32_t wid)
+{
+    sa_payload_init();
+    pack(wid);
+    return sa_payload_send(SA_OPCODE_WINDOW_LOCKEDBOUNDS_CLEAR);
+}
+
 bool scripting_addition_swap_window_proxy_in(struct window_animation *animation_list, int animation_count)
 {
     uint32_t dummy_wid = 0;

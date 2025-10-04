@@ -247,7 +247,7 @@ extern bool g_verbose;
 
 /* --------------------------------DOMAIN DEBUG--------------------------------- */
 #define COMMAND_DEBUG_LOG_TEST "--log-test"
-#define COMMAND_DEBUG_CALL_API "--call-api"
+#define COMMAND_DEBUG_TEST_API "--test-api"
 #define COMMAND_DEBUG_WINDOW_TAGS "--window-tags"
 #define COMMAND_DEBUG_SPACE_ITERATOR "--space-iterator"
 #define COMMAND_DEBUG_DISPLAY_HIERARCHY "--display-hierarchy"
@@ -3151,318 +3151,36 @@ static void handle_domain_debug(FILE *rsp, struct token domain, char *message)
             return;
         }
         
-        fprintf(rsp, "✅ All symbols found! Use --call-api to test them.\n\n");
+        fprintf(rsp, "✅ All symbols found! Use --test-api to test them.\n\n");
         fprintf(rsp, "Examples:\n");
-        fprintf(rsp, "  yabai -m debug --call-api SLSGetActiveSpace\n");
-        fprintf(rsp, "  yabai -m debug --call-api SLSGetWorkspace <wid>\n");
-        fprintf(rsp, "  yabai -m debug --call-api SLSGetWorkspaceWindowGroup <workspace_id>\n");
-        fprintf(rsp, "  yabai -m debug --call-api SLSGetSpaceBindings <space_id>\n");
-        fprintf(rsp, "  yabai -m debug --call-api SLSGetWindowWorkspaceIgnoringVisibility <wid>\n");
-        fprintf(rsp, "  yabai -m debug --call-api SLSCopyWindowGroup <wid> [GroupName]\n\n");
+        fprintf(rsp, "  yabai -m debug --test-api SLSGetActiveSpace\n");
+        fprintf(rsp, "  yabai -m debug --test-api SLSGetWorkspace <wid>\n");
+        fprintf(rsp, "  yabai -m debug --test-api SLSGetWorkspaceWindowGroup <workspace_id>\n");
+        fprintf(rsp, "  yabai -m debug --test-api SLSGetSpaceBindings <space_id>\n");
+        fprintf(rsp, "  yabai -m debug --test-api SLSGetWindowWorkspaceIgnoringVisibility <wid>\n");
+        fprintf(rsp, "  yabai -m debug --test-api SLSCopyWindowGroup <wid> [GroupName]\n\n");
         fprintf(rsp, "Note: Window group names to try: OrderingGroup, WorkspaceGroup, etc.\n\n");
         fprintf(rsp, "=== Test Complete ===\n");
-    } else if (token_equals(command, COMMAND_DEBUG_CALL_API)) {
+    } else if (token_equals(command, COMMAND_DEBUG_TEST_API)) {
         extern int g_connection;
-        
-        struct token api_name = get_token(&message);
-        if (!token_is_valid(api_name)) {
-            daemon_fail(rsp, "usage: yabai -m debug --call-api <API_NAME> [args...]\n");
+        struct token test_func = get_token(&message);
+        if (!token_is_valid(test_func)) {
+            daemon_fail(rsp, "usage: yabai -m debug --test-api <API_NAME> [args...]\n");
             return;
         }
         
         // Build the symbol name (prepend _ if not present)
         char symbol_name[256];
-        if (api_name.text[0] == '_') {
-            snprintf(symbol_name, sizeof(symbol_name), "%.*s", api_name.length, api_name.text);
-        } else {
-            snprintf(symbol_name, sizeof(symbol_name), "_%.*s", api_name.length, api_name.text);
-        }
+
+            snprintf(symbol_name, sizeof(symbol_name), "%.*s", test_func.length, test_func.text);
         
-        // Try to find the symbol
-        void *symbol = macho_find_symbol(
-            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
-            symbol_name
-        );
         
-        if (!symbol) {
-            daemon_fail(rsp, "API '%s' not found in SkyLight framework\n", symbol_name);
-            return;
-        }
+        // Get remaining args
+        char *remaining_args = message;
         
-        fprintf(rsp, "=== Calling %s ===\n\n", symbol_name);
-        fprintf(rsp, "Symbol address: %p\n", symbol);
-        fprintf(rsp, "Connection ID: %d\n\n", g_connection);
-        
-        // Handle different APIs based on name
-        if (strstr(symbol_name, "SLSGetActiveSpace")) {
-            typedef uint64_t (*func_t)(int);
-            func_t func = (func_t)symbol;
-            uint64_t result = func(g_connection);
-            fprintf(rsp, "Result: %llu (0x%llx)\n", result, result);
-            
-        } else if (strstr(symbol_name, "SLSGetWorkspace")) {
-            // SLSGetWorkspace(cid, wid) -> int
-            struct token wid_token = get_token(&message);
-            uint32_t wid = 0;
-            
-            if (token_is_valid(wid_token)) {
-                int wid_int;
-                if (token_is_positive_integer(wid_token, &wid_int)) {
-                    wid = (uint32_t)wid_int;
-                }
-            }
-            
-            if (wid == 0) {
-                struct window *window = window_manager_focused_window(&g_window_manager);
-                wid = window ? window->id : 0;
-            }
-            
-            if (wid == 0) {
-                daemon_fail(rsp, "No window ID provided and no focused window found\n");
-                return;
-            }
-            
-            fprintf(rsp, "Window ID: %u\n", wid);
-            
-            typedef int (*func_t)(int, uint32_t);
-            func_t func = (func_t)symbol;
-            int result = func(g_connection, wid);
-            fprintf(rsp, "Result: %d\n", result);
-            
-        } else if (strstr(symbol_name, "SLSGetWindowWorkspaceIgnoringVisibility")) {
-            // SLSGetWindowWorkspaceIgnoringVisibility(cid, wid) -> int
-            struct token wid_token = get_token(&message);
-            uint32_t wid = 0;
-            
-            if (token_is_valid(wid_token)) {
-                int wid_int;
-                if (token_is_positive_integer(wid_token, &wid_int)) {
-                    wid = (uint32_t)wid_int;
-                }
-            }
-            
-            if (wid == 0) {
-                struct window *window = window_manager_focused_window(&g_window_manager);
-                wid = window ? window->id : 0;
-            }
-            
-            if (wid == 0) {
-                daemon_fail(rsp, "No window ID provided and no focused window found\n");
-                return;
-            }
-            
-            fprintf(rsp, "Window ID: %u\n", wid);
-            fprintf(rsp, "Attempting to call function...\n");
-            fflush(rsp);
-            
-            @try {
-                typedef int (*func_t)(int, uint32_t);
-                func_t func = (func_t)symbol;
-                int result = func(g_connection, wid);
-                fprintf(rsp, "Result: %d\n", result);
-            } @catch (NSException *exception) {
-                fprintf(rsp, "CAUGHT EXCEPTION: %s\n", [[exception reason] UTF8String]);
-                fprintf(rsp, "This likely means the function signature is wrong.\n");
-                fprintf(rsp, "Try: The function might return void, take different parameters,\n");
-                fprintf(rsp, "     or require the window to be in a specific state.\n");
-            }
-            
-        } else if (strstr(symbol_name, "SLSGetWorkspaceWindowGroup")) {
-            // SLSGetWorkspaceWindowGroup(cid, workspace) -> CFArrayRef
-            struct token workspace_token = get_token(&message);
-            int workspace = 0;
-            
-            if (token_is_valid(workspace_token)) {
-                token_is_positive_integer(workspace_token, &workspace);
-            }
-            
-            if (workspace == 0) {
-                daemon_fail(rsp, "Workspace ID required. Usage: --call-api SLSGetWorkspaceWindowGroup <workspace_id>\n");
-                return;
-            }
-            
-            fprintf(rsp, "Workspace ID: %d\n", workspace);
-            
-            typedef CFArrayRef (*func_t)(int, int);
-            func_t func = (func_t)symbol;
-            CFArrayRef result = func(g_connection, workspace);
-            
-            if (result) {
-                CFIndex count = CFArrayGetCount(result);
-                fprintf(rsp, "Result: CFArray with %ld items\n", count);
-                for (CFIndex i = 0; i < count && i < 20; ++i) {
-                    CFTypeRef item = CFArrayGetValueAtIndex(result, i);
-                    fprintf(rsp, "  [%ld]: %p (CFTypeID: %lu)\n", i, item, CFGetTypeID(item));
-                }
-                if (count > 20) fprintf(rsp, "  ... (%ld more)\n", count - 20);
-                CFRelease(result);
-            } else {
-                fprintf(rsp, "Result: NULL\n");
-            }
-            
-        } else if (strstr(symbol_name, "SLSGetSpaceBindings")) {
-            // SLSGetSpaceBindings(cid, sid) -> CFArrayRef
-            struct token sid_token = get_token(&message);
-            uint64_t sid = 0;
-            
-            if (token_is_valid(sid_token)) {
-                int sid_int;
-                if (token_is_positive_integer(sid_token, &sid_int)) {
-                    sid = (uint64_t)sid_int;
-                }
-            }
-            
-            if (sid == 0) {
-                sid = space_manager_active_space();
-            }
-            
-            fprintf(rsp, "Space ID: %llu\n", sid);
-            
-            typedef CFArrayRef (*func_t)(int, uint64_t);
-            func_t func = (func_t)symbol;
-            CFArrayRef result = func(g_connection, sid);
-            
-            if (result) {
-                CFIndex count = CFArrayGetCount(result);
-                fprintf(rsp, "Result: CFArray with %ld items\n", count);
-                for (CFIndex i = 0; i < count && i < 20; ++i) {
-                    CFTypeRef item = CFArrayGetValueAtIndex(result, i);
-                    CFStringRef desc = CFCopyDescription(item);
-                    char buffer[512];
-                    if (CFStringGetCString(desc, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
-                        fprintf(rsp, "  [%ld]: %s\n", i, buffer);
-                    } else {
-                        fprintf(rsp, "  [%ld]: <complex object>\n", i);
-                    }
-                    CFRelease(desc);
-                }
-                if (count > 20) fprintf(rsp, "  ... (%ld more)\n", count - 20);
-                CFRelease(result);
-            } else {
-                fprintf(rsp, "Result: NULL\n");
-            }
-            
-        } else if (strstr(symbol_name, "SLSCopyWindowGroup")) {
-            // SLSCopyWindowGroup(cid, wid, groupName) -> CFArrayRef
-            struct token wid_token = get_token(&message);
-            struct token group_token = get_token(&message);
-            uint32_t wid = 0;
-            
-            if (token_is_valid(wid_token)) {
-                int wid_int;
-                if (token_is_positive_integer(wid_token, &wid_int)) {
-                    wid = (uint32_t)wid_int;
-                }
-            }
-            
-            if (wid == 0) {
-                struct window *window = window_manager_focused_window(&g_window_manager);
-                wid = window ? window->id : 0;
-            }
-            
-            if (wid == 0) {
-                daemon_fail(rsp, "No window ID provided and no focused window found\n");
-                return;
-            }
-            
-            // Default group name if not provided
-            char group_name[256] = "OrderingGroup";
-            if (token_is_valid(group_token)) {
-                snprintf(group_name, sizeof(group_name), "%.*s", group_token.length, group_token.text);
-            }
-            
-            fprintf(rsp, "Window ID: %u\n", wid);
-            fprintf(rsp, "Group Name: %s\n\n", group_name);
-            
-            @try {
-                // Create CFString for group name
-                CFStringRef group_cf = CFStringCreateWithCString(NULL, group_name, kCFStringEncodingUTF8);
-                if (!group_cf) {
-                    fprintf(rsp, "Failed to create CFString\n");
-                    return;
-                }
-                
-                fprintf(rsp, "Attempting call with signature: CFArrayRef func(int cid, uint32_t wid, CFStringRef group)\n");
-                fflush(rsp);
-                
-                typedef CFArrayRef (*func_t)(int, uint32_t, CFStringRef);
-                func_t func = (func_t)symbol;
-                CFArrayRef result = func(g_connection, wid, group_cf);
-                
-                fprintf(rsp, "✅ Call succeeded! Result: %p\n", result);
-                
-                if (result) {
-                    CFTypeID type_id = CFGetTypeID(result);
-                    fprintf(rsp, "Result TypeID: %lu (CFArray=%lu, CFNumber=%lu)\n", 
-                            type_id, CFArrayGetTypeID(), CFNumberGetTypeID());
-                    
-                    if (type_id == CFArrayGetTypeID()) {
-                        CFIndex count = CFArrayGetCount(result);
-                        fprintf(rsp, "Array contains %ld items:\n\n", count);
-                        
-                        for (CFIndex i = 0; i < count && i < 50; ++i) {
-                            CFTypeRef item = CFArrayGetValueAtIndex(result, i);
-                            CFTypeID item_type = CFGetTypeID(item);
-                            
-                            fprintf(rsp, "  [%ld]: ", i);
-                            
-                            if (item_type == CFNumberGetTypeID()) {
-                                uint32_t window_id = 0;
-                                CFNumberGetValue((CFNumberRef)item, kCFNumberSInt32Type, &window_id);
-                                fprintf(rsp, "%u", window_id);
-                                
-                                struct window *win = window_manager_find_window(&g_window_manager, window_id);
-                                if (win) {
-                                    fprintf(rsp, " - %s", win->application->name);
-                                }
-                            } else {
-                                // Try raw pointer cast
-                                uint32_t window_id = (uint32_t)(uintptr_t)item;
-                                fprintf(rsp, "%u (raw, TypeID=%lu)", window_id, item_type);
-                                
-                                struct window *win = window_manager_find_window(&g_window_manager, window_id);
-                                if (win) {
-                                    fprintf(rsp, " - %s", win->application->name);
-                                }
-                            }
-                            fprintf(rsp, "\n");
-                        }
-                        
-                        if (count > 50) fprintf(rsp, "  ... (%ld more)\n", count - 50);
-                    } else {
-                        fprintf(rsp, "Result is not a CFArray. Description:\n");
-                        CFStringRef desc = CFCopyDescription(result);
-                        char buffer[1024];
-                        if (CFStringGetCString(desc, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
-                            fprintf(rsp, "%s\n", buffer);
-                        }
-                        CFRelease(desc);
-                    }
-                    
-                    CFRelease(result);
-                } else {
-                    fprintf(rsp, "Result: NULL (group doesn't exist or window not in group)\n");
-                }
-                
-                CFRelease(group_cf);
-                
-            } @catch (NSException *exception) {
-                fprintf(rsp, "\n⚠️  EXCEPTION: %s\n", [[exception reason] UTF8String]);
-                fprintf(rsp, "\nPossible issues:\n");
-                fprintf(rsp, "  - Function signature mismatch\n");
-                fprintf(rsp, "  - Invalid group name for this macOS version\n");
-                fprintf(rsp, "  - Window not in required state\n");
-                fprintf(rsp, "\nTry group names: kCGSWindowGroupMoveGroup, kCGSWindowGroupWorkspace, etc.\n");
-            }
-            
-        } else {
-            fprintf(rsp, "⚠️  API '%s' is recognized but no handler implemented yet.\n", symbol_name);
-            fprintf(rsp, "Add a handler in handle_domain_debug() to call this API.\n");
-            fprintf(rsp, "\nTo add support, edit handle_domain_debug() and add a case like:\n");
-            fprintf(rsp, "  else if (strstr(symbol_name, \"YourAPI\")) { ... }\n");
-        }
-        
-        fprintf(rsp, "\n=== Call Complete ===\n");
+        // Call debug function in debug.m
+        debug_call_api(rsp, symbol_name, remaining_args);
+
     } else if (token_equals(command, COMMAND_DEBUG_WINDOW_TAGS)) {
         // Print comprehensive window iterator data for the focused window
         // Usage: yabai -m debug --window-tags [flags]
@@ -3480,6 +3198,7 @@ static void handle_domain_debug(FILE *rsp, struct token domain, char *message)
         // Parse flags from remaining message
         struct token flags_token = get_token(&message);
         char *flags = flags_token.text;
+
         bool show_basic = false;
         bool show_bounds = false;
         bool show_space = false;
@@ -3759,6 +3478,40 @@ static void handle_domain_debug(FILE *rsp, struct token domain, char *message)
         
         fprintf(rsp, "=== Space Iterator Test ===\n\n");
         fprintf(rsp, "Testing Space ID: %llu\n\n", sid);
+        
+        // COMPARISON: Show what yabai's current method returns
+        fprintf(rsp, "📊 COMPARISON - Current yabai method (SLSCopyManagedDisplaySpaces):\n");
+        CFArrayRef display_spaces_ref = SLSCopyManagedDisplaySpaces(g_connection);
+        if (display_spaces_ref) {
+            int display_count = CFArrayGetCount(display_spaces_ref);
+            fprintf(rsp, "  Found %d displays\n", display_count);
+            
+            int total_spaces = 0;
+            for (int i = 0; i < display_count; i++) {
+                CFDictionaryRef display = CFArrayGetValueAtIndex(display_spaces_ref, i);
+                CFArrayRef spaces = CFDictionaryGetValue(display, CFSTR("Spaces"));
+                if (spaces) {
+                    int space_count = CFArrayGetCount(spaces);
+                    total_spaces += space_count;
+                    fprintf(rsp, "  Display %d: %d spaces - IDs: ", i, space_count);
+                    for (int j = 0; j < space_count; j++) {
+                        CFDictionaryRef space_dict = CFArrayGetValueAtIndex(spaces, j);
+                        CFNumberRef space_id_ref = CFDictionaryGetValue(space_dict, CFSTR("id64"));
+                        if (space_id_ref) {
+                            uint64_t space_id;
+                            CFNumberGetValue(space_id_ref, kCFNumberSInt64Type, &space_id);
+                            fprintf(rsp, "%llu%s", space_id, (j < space_count - 1) ? ", " : "");
+                        }
+                    }
+                    fprintf(rsp, "\n");
+                }
+            }
+            fprintf(rsp, "  TOTAL SPACES (yabai method): %d\n", total_spaces);
+            CFRelease(display_spaces_ref);
+        } else {
+            fprintf(rsp, "  ERROR: SLSCopyManagedDisplaySpaces returned NULL\n");
+        }
+        fprintf(rsp, "\n");
         
         // Get windows for this space first
         uint64_t set_tags = 0;

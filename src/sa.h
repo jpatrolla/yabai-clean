@@ -28,5 +28,6 @@ bool scripting_addition_order_window_in(uint32_t *window_list, int window_count)
 bool scripting_addition_move_window_list_to_space(uint64_t sid, uint32_t *window_list, int window_count);
 bool scripting_addition_move_window_to_space(uint64_t sid, uint32_t wid);
 bool scripting_addition_animate_with_lockedbounds(uint32_t wid, float fade_duration, float cx, float cy, float cw, float ch, float min_opacity, float progress);
+bool scripting_addition_clear_lockedbounds(uint32_t wid);
 
 #endif

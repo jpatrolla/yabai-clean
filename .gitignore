@@ -30,3 +30,8 @@ notes.md
 todo.md
 scratch.md
 WIP_*.md
+.cache
+*.idx
+.clangd
+.clangd_preamble.h
+/private

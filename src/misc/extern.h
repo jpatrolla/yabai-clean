@@ -62,9 +62,11 @@ extern Boolean CoreDockGetAutoHideEnabled(void);
 extern void CoreDockGetOrientationAndPinning(int *orientation, int *pinning);
 extern CFStringRef SLSCopyManagedDisplayForSpace(int cid, uint64_t sid);
 extern int SLSSpaceGetType(int cid, uint64_t sid);
+extern int CGSSpaceGetType(int cid, uint64_t sid);
 extern CFStringRef SLSSpaceCopyName(int cid, uint64_t sid);
 extern CFArrayRef SLSCopyWindowsWithOptionsAndTags(int cid, uint32_t owner, CFArrayRef spaces, uint32_t options, uint64_t *set_tags, uint64_t *clear_tags);
 extern int SLSGetSpaceManagementMode(int cid);
+//extern int SLSWindowServerClientSpaceGetType(int cid, uint64_t sid);
 extern CFArrayRef SLSCopyManagedDisplaySpaces(int cid);
 extern CGError SLSProcessAssignToSpace(int cid, pid_t pid, uint64_t sid);
 extern CGError SLSProcessAssignToAllSpaces(int cid, pid_t pid);
@@ -72,42 +74,69 @@ extern void SLSMoveWindowsToManagedSpace(int cid, CFArrayRef window_list, uint64
 extern CGError CoreDockSendNotification(CFStringRef notification, int unknown);
 extern CGError SLSMoveWindow(int cid, uint32_t wid, CGPoint *point);
 extern CFArrayRef SLSCopyAssociatedWindows(int cid, uint32_t wid);
+extern CFStringRef SLSCopyWindowGroup(int cid, uint32_t wid);
+extern int SLSGetWindowDepth(int cid, uint32_t wid);
+
+// Window Query APIs
+extern CFTypeID SLSWindowQueryResultGetTypeID(CFTypeRef window_query_result);
+extern CFTypeID SLSWindowQueryGetTypeID(CFTypeRef window_query);
+extern CFTypeRef SLSWindowQueryCreate(int cid);
+extern void SLSWindowQuerySetValue(CFTypeRef window_query, CFStringRef key, CFTypeRef value);
+extern CFTypeRef SLSWindowQueryCopyValue(CFTypeRef window_query, CFStringRef key);
+extern CFTypeRef SLSWindowQueryRun(CFTypeRef window_query);
 extern CFTypeRef SLSWindowQueryWindows(int cid, CFArrayRef windows, int count);
+extern int SLSWindowQueryResultGetWindowCount(CFTypeRef window_query_result);
 extern CFTypeRef SLSWindowQueryResultCopyWindows(CFTypeRef window_query);
+extern int SLSPackagesGetWorkspaceForWorkspaceIdentifier(int cid, CFStringRef identifier);
 extern int SLSWindowQueryResultGetSpaceCount(CFTypeRef window_query);
 extern CFTypeRef SLSWindowQueryResultCopySpaces(CFTypeRef window_query);
+extern int SLSWindowQueryResultGetManagedDisplayCount(CFTypeRef window_query_result);
+extern CFArrayRef SLSWindowQueryResultCopyManagedDisplays(CFTypeRef window_query_result);
+//extern CFTypeRef SLSDisplayStatusQuery(int cid);
+
+// Window Iterator APIs
 extern int SLSWindowIteratorGetCount(CFTypeRef iterator);
 extern bool SLSWindowIteratorAdvance(CFTypeRef iterator);
-extern uint32_t SLSWindowIteratorGetParentID(CFTypeRef iterator);
+extern bool SLSWindowIteratorIsInSpace(CFTypeRef iterator, uint64_t space_id); //testing something
+//extern bool SLSWindowIteratorIsInSpace(CFTypeRef iterator);
+
+extern uint64_t SLSWindowIteratorGetMatchingSpaceID(CFTypeRef iterator);
+extern uint32_t SLSWindowIteratorGetSpaceAttributes(CFTypeRef iterator);
+extern uint32_t SLSWindowIteratorGetSpaceTypeMask(CFTypeRef iterator);
+extern int SLSWindowIteratorGetSpaceCount(CFTypeRef iterator);
+extern CFArrayRef SLSWindowIteratorCopySpaces(CFTypeRef iterator);
+extern int SLSWindowIteratorGetCount(CFTypeRef iterator);
 extern uint32_t SLSWindowIteratorGetWindowID(CFTypeRef iterator);
 extern uint32_t SLSWindowIteratorGetOwner(CFTypeRef iterator);
+extern uint32_t SLSWindowIteratorGetParentID(CFTypeRef iterator);
 extern pid_t SLSWindowIteratorGetPID(CFTypeRef iterator);
 extern ProcessSerialNumber SLSWindowIteratorGetPSN(CFTypeRef iterator);
 extern uint64_t SLSWindowIteratorGetTags(CFTypeRef iterator);
-extern uint64_t SLSWindowIteratorGetAttributes(CFTypeRef iterator);
-extern uint32_t SLSWindowIteratorGetSpaceAttributes(CFTypeRef iterator);
-extern uint32_t SLSWindowIteratorGetSpaceTypeMask(CFTypeRef iterator);
-extern int SLSWindowIteratorGetLevel(CFTypeRef iterator);
-extern float SLSWindowIteratorGetAlpha(CFTypeRef iterator);
 extern CGRect SLSWindowIteratorGetBounds(CFTypeRef iterator);
 extern CGRect SLSWindowIteratorGetFrameBounds(CFTypeRef iterator);
 extern CGRect SLSWindowIteratorGetLastNonEmptyFrameBounds(CFTypeRef iterator);
-extern CGRect SLSWindowIteratorGetScreenRect(CFTypeRef iterator);
-extern CGRect SLSWindowIteratorGetConstraints(CFTypeRef iterator);
 extern void SLSWindowIteratorGetCornerRadii(CFTypeRef iterator, float radii[4]);
 extern void SLSWindowIteratorGetResolvedCornerRadii(CFTypeRef iterator, float radii[4]);
 extern uint32_t SLSWindowIteratorGetCornerMaskFlags(CFTypeRef iterator);
-extern uint64_t SLSWindowIteratorGetMatchingSpaceID(CFTypeRef iterator);
+extern CFStringRef SLSWindowIteratorCopyTitle(CFTypeRef iterator);
+extern int SLSWindowIteratorGetLevel(CFTypeRef iterator);
+extern float SLSWindowIteratorGetAlpha(CFTypeRef iterator);
+extern CGRect SLSWindowIteratorGetScreenRect(CFTypeRef iterator);
+extern CGRect SLSWindowIteratorGetConstraints(CFTypeRef iterator);
+extern uint64_t SLSWindowIteratorGetAttributes(CFTypeRef iterator);
 extern int SLSWindowIteratorGetAttachedWindowCount(CFTypeRef iterator);
-extern int SLSWindowIteratorGetSpaceCount(CFTypeRef iterator);
+extern CFArrayRef SLSWindowIteratorCopyAttachedWindows(CFTypeRef iterator);
 extern CFTypeID SLSWindowIteratorGetTypeID(CFTypeRef iterator);
-extern int SLSSpaceIteratorGetCount(CFTypeRef iterator);
+
+// Space Iterator APIs
 extern bool SLSSpaceIteratorAdvance(CFTypeRef iterator);
+extern int SLSSpaceIteratorGetCount(CFTypeRef iterator);
 extern uint64_t SLSSpaceIteratorGetSpaceID(CFTypeRef iterator);
 extern int SLSSpaceIteratorGetType(CFTypeRef iterator);
 extern uint64_t SLSSpaceIteratorGetAttributes(CFTypeRef iterator);
 extern int SLSSpaceIteratorGetAbsoluteLevel(CFTypeRef iterator);
 extern uint64_t SLSSpaceIteratorGetParentSpaceID(CFTypeRef iterator);
+
 extern OSStatus _SLPSGetFrontProcess(ProcessSerialNumber *psn);
 extern CGError SLSGetWindowOwner(int cid, uint32_t wid, int *wcid);
 extern CGError SLSGetConnectionPSN(int cid, ProcessSerialNumber *psn);
@@ -132,3 +161,8 @@ extern CGError SLSTransactionClearWindowLockedBounds(CFTypeRef transaction, uint
 extern CFArrayRef SLSHWCaptureWindowList(int cid, uint32_t *window_list, int window_count, uint32_t options);
 extern CGError SLSSpaceSetCompatID(int cid, uint64_t sid, int workspace);
 extern CGError SLSSetWindowListWorkspace(int cid, uint32_t *window_list, int window_count, int workspace);
+
+// Group introspection & ordering (prototypes that won't crash ABI)
+extern uint64_t SLSGetWorkspaceWindowGroup( int cid,  uint32_t wid,int workspace);
+extern int      SLSGetWindowWorkspaceIgnoringVisibility(int cid, uint32_t wid);
+extern int      SLSGetWindowWorkspace(int cid, uint32_t wid);

@@ -74,7 +74,7 @@ _SLSSpaceCopyName:
 _SLSWindowServerClientSpaceCopyName:
 _SLSSpaceSetName:
 _SLSWindowServerClientSpaceSetName:
-_SLSSpaceGetType:
+dc:
 _SLSWindowServerClientSpaceGetType:
 _SLSSpaceSetType:
 _SLSSpaceSetCompatID:

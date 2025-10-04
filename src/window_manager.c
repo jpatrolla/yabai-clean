@@ -741,9 +741,6 @@ static void window_manager_animate_windows_lockedbounds_timer_handler(void *data
 #define ANIMATION_EASING_TYPE_ENTRY(value) case value##_type: mt = value(t); break;
         ANIMATION_EASING_TYPE_LIST
 #undef ANIMATION_EASING_TYPE_ENTRY
-    default:
-        mt = t; // Linear fallback
-        break;
     }
 
     // Interpolate and send bounds for each window
@@ -765,18 +762,48 @@ static void window_manager_animate_windows_lockedbounds_timer_handler(void *data
     }
 
     if (t >= 1.0f) {
-        // Animation complete - cleanup
+        // Animation complete - verify frames before clearing LockedBounds
+        bool all_frames_match = true;
         
-        pthread_mutex_lock(&g_window_manager.window_animations_lock);
         for (int i = 0; i < animation_count; ++i) {
-            table_remove(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+            if (__atomic_load_n(&context->animation_list[i].skip, __ATOMIC_RELAXED)) continue;
+            
+            // Check if actual window frame matches target
+            CGRect current_bounds;
+            SLSGetWindowBounds(g_connection, context->animation_list[i].wid, &current_bounds);
+            
+            // Allow 1px tolerance for floating point comparison
+            bool x_match = fabs(current_bounds.origin.x - context->animation_list[i].end_x) < 1.0f;
+            bool y_match = fabs(current_bounds.origin.y - context->animation_list[i].end_y) < 1.0f;
+            bool w_match = fabs(current_bounds.size.width - context->animation_list[i].end_w) < 1.0f;
+            bool h_match = fabs(current_bounds.size.height - context->animation_list[i].end_h) < 1.0f;
+            
+            if (!x_match || !y_match || !w_match || !h_match) {
+                all_frames_match = false;
+                break;
+            }
         }
-        pthread_mutex_unlock(&g_window_manager.window_animations_lock);
         
-        dispatch_source_cancel(context->timer);
-        dispatch_release(context->timer);
-        free(context->animation_list);
-        free(context);
+        if (all_frames_match) {
+            // All frames match - safe to clear LockedBounds
+            pthread_mutex_lock(&g_window_manager.window_animations_lock);
+            for (int i = 0; i < animation_count; ++i) {
+                if (__atomic_load_n(&context->animation_list[i].skip, __ATOMIC_RELAXED)) continue;
+                
+                // Clear LockedBounds - window is now at final position
+                scripting_addition_clear_lockedbounds(context->animation_list[i].wid);
+                table_remove(&g_window_manager.window_animations_table, &context->animation_list[i].wid);
+            }
+            pthread_mutex_unlock(&g_window_manager.window_animations_lock);
+            
+            dispatch_source_cancel(context->timer);
+            dispatch_release(context->timer);
+            free(context->animation_list);
+            free(context);
+        } else {
+            // Frames don't match yet - keep checking (timer continues)
+            // This gives the AX API time to catch up
+        }
     }
 }
 
@@ -828,6 +855,7 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
         context->animation_list[i].end_y = window_list[i].y;
         context->animation_list[i].end_w = window_list[i].w;
         context->animation_list[i].end_h = window_list[i].h;
+        
     }
     
     // Mark windows as animating in the table (prevents duplicate animations)
@@ -839,7 +867,7 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
     }
     pthread_mutex_unlock(&g_window_manager.window_animations_lock);
     
-    // Send initial locked bounds for all windows FIRST - locks visual position
+    // Send initial locked bounds for all windows FIRST - locks visual position at start
     for (int i = 0; i < window_count; ++i) {
         scripting_addition_animate_with_lockedbounds(
             context->animation_list[i].wid,
@@ -851,7 +879,8 @@ void window_manager_animate_windows_lockedbounds_async(struct window_capture *wi
         );
     }
 
-    // NOW set final frames via AX - window moves but LockedBounds keeps it looking at start
+    // NOW set final frames via AX - window moves internally but LockedBounds keeps it visually at start
+    // This way the app's internal state matches the target while we animate the visual representation
     for (int i = 0; i < window_count; ++i) {
         window_manager_set_window_frame(context->animation_list[i].window, 
                                         context->animation_list[i].end_x, 
@@ -909,6 +938,7 @@ void window_manager_set_window_frame(struct window *window, float x, float y, fl
     // A possible solution is to use the faster CG window notifications, as they are **a lot** more responsive, and can be used to
     // track changes to the window frame in real-time without delay.
     //
+
 
     AX_ENHANCED_UI_WORKAROUND(window->application->ref, {
         // NOTE(koekeishiya): Due to macOS constraints (visible screen-area), we might need to resize the window *before* moving it.

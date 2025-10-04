@@ -75,6 +75,7 @@
 #include "space_manager.h"
 #include "window_manager.h"
 #include "mouse_handler.h"
+#include "debug.h"
 
 #include "sa.m"
 #include "mission_control.c"
@@ -83,6 +84,7 @@
 #include "workspace.m"
 #include "rule.c"
 #include "space_indicator.h"
+#include "debug.m"
 #include "message.c"
 #include "display.c"
 #include "space.c"
